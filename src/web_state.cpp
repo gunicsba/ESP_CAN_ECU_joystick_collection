@@ -13,7 +13,7 @@ CanOutputRule g_canOutputRules[MAX_CAN_OUTPUT_RULES];
 #endif
 
 #if !defined(ECU_TYPE_JOYSTICK)
-uint16_t g_localPot1 = 512, g_localPot2 = 512;
+uint16_t g_localPot1 = 512, g_localPot2 = 512, g_localPot3 = 512;
 bool g_localBtn1 = false, g_localBtn2 = false;
 uint8_t g_ecuJoystickId = 0;
 #endif

@@ -529,7 +529,7 @@ static void handleState() {
 #if defined(ECU_TYPE_JOYSTICK)
     if (g_ecuJoystickId > 0 && g_can) {
         json += "\"" + String(g_can->getAddress()) + "\":{";
-        json += "\"pots\":[" + String(g_localPot1) + "," + String(g_localPot2) + ",0],";
+        json += "\"pots\":[" + String(g_localPot1) + "," + String(g_localPot2) + "," + String(g_localPot3) + "],";
         json += "\"btns\":" + String((g_localBtn1 ? 1 : 0) | (g_localBtn2 ? 2 : 0)) + ",";
         json += "\"age\":0},";
     }
@@ -766,7 +766,7 @@ static void scanHeartbeats() {
 void ota_setup(const char* hostname) {
     WiFi.mode(WIFI_AP);
     String ssid = String(hostname);
-    WiFi.softAP(ssid.c_str(), "forwarder123");
+    WiFi.softAP(ssid.c_str(), "12345678");
 
     if (!MDNS.begin(hostname)) {
         Serial.println("[OTA] mDNS failed");

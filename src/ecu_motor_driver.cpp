@@ -318,7 +318,9 @@ void ecu_setup() {
                   g_can->getAddress(), g_pca2Present ? 16 : 8);
     can_output_setup(g_canOutputRules);
 #if defined(ENABLE_OTA_WEBSERVER)
-    ota_setup("forwarder-motor");
+    char hostname[24];
+    snprintf(hostname, sizeof(hostname), "forwarder-motor-%02X", g_can->getAddress());
+    ota_setup(hostname);
 #endif
 }
 

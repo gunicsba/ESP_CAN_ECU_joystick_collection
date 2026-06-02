@@ -17,6 +17,6 @@ extern ForwarderCAN* g_can;
 extern CanOutputRule g_canOutputRules[MAX_CAN_OUTPUT_RULES];
 
 // Joystick local state (for when running on joystick ECU)
-extern uint16_t g_localPot1, g_localPot2;
+extern uint16_t g_localPot1, g_localPot2, g_localPot3;
 extern bool g_localBtn1, g_localBtn2;
 extern uint8_t g_ecuJoystickId;

@@ -23,6 +23,9 @@
 #ifndef POT2_PIN
 #define POT2_PIN 7
 #endif
+#ifndef POT3_PIN
+#define POT3_PIN 34
+#endif
 #ifndef BTN1_PIN
 #define BTN1_PIN 16
 #endif
@@ -40,11 +43,11 @@ static NeoPixelBus<NeoGrbFeature, Neo800KbpsMethod> strip(1, WS2812_PIN);
 ForwarderCAN* g_can = nullptr;
 static ForwarderConfig cfgMgr("joycfg");
 
-uint16_t g_localPot1 = 512, g_localPot2 = 512;
+uint16_t g_localPot1 = 512, g_localPot2 = 512, g_localPot3 = 512;
 bool g_localBtn1 = false, g_localBtn2 = false;
 uint8_t g_ecuJoystickId = ECU_JOYSTICK_ID;
 
-static uint16_t prevPot1 = 0xFFFF, prevPot2 = 0xFFFF;
+static uint16_t prevPot1 = 0xFFFF, prevPot2 = 0xFFFF, prevPot3 = 0xFFFF;
 static uint8_t prevButtons = 0xFF;
 static uint32_t lastSend = 0;
 static uint32_t lastHeartbeat = 0;
@@ -63,6 +66,7 @@ static const uint8_t ECU_NAME[8] = {
 static void readInputs() {
     g_localPot1 = analogRead(POT1_PIN);
     g_localPot2 = analogRead(POT2_PIN);
+    g_localPot3 = analogRead(POT3_PIN);
     g_localBtn1 = digitalRead(BTN1_PIN) == LOW;
     g_localBtn2 = digitalRead(BTN2_PIN) == LOW;
 }
@@ -184,9 +188,14 @@ void ecu_setup() {
         }
     }
     Serial.printf("[Joystick%d] Ready on address 0x%02X.\n", ECU_JOYSTICK_ID, g_can->getAddress());
+    Serial.printf("[Joystick%d] CAN_TX=%d CAN_RX=%d CAN_SE=%d bitrate=%d\n",
+        ECU_JOYSTICK_ID, CAN_TX_PIN, CAN_RX_PIN, CAN_SE_PIN, CAN_BITRATE);
+#if CAN_SE_PIN >= 0
+    Serial.printf("[Joystick%d] CAN transceiver enabled (SE=HIGH)\n", ECU_JOYSTICK_ID);
+#endif
 #if defined(ENABLE_OTA_WEBSERVER)
     char hostname[24];
-    snprintf(hostname, sizeof(hostname), "forwarder-joy%d", ECU_JOYSTICK_ID);
+    snprintf(hostname, sizeof(hostname), "forwarder-joy%d-%02X", ECU_JOYSTICK_ID, g_can->getAddress());
     ota_setup(hostname);
 #endif
 }
@@ -207,6 +216,11 @@ void ecu_loop() {
         sendPot(PF_JOYSTICK_POT2, g_localPot2);
         changed = true;
     }
+    if (abs((int)g_localPot3 - (int)prevPot3) > 2) {
+        prevPot3 = g_localPot3;
+        sendPot(PF_JOYSTICK_POT3, g_localPot3);
+        changed = true;
+    }
     uint8_t buttons = 0;
     if (g_localBtn1) buttons |= 0x01;
     if (g_localBtn2) buttons |= 0x02;
@@ -220,6 +234,7 @@ void ecu_loop() {
         if (!changed) {
             sendPot(PF_JOYSTICK_POT1, g_localPot1);
             sendPot(PF_JOYSTICK_POT2, g_localPot2);
+            sendPot(PF_JOYSTICK_POT3, g_localPot3);
             sendButtons();
         }
     }
@@ -228,6 +243,10 @@ void ecu_loop() {
         if (g_can->isOnline()) {
             sendHeartbeat();
         }
+        Serial.printf("[CAN] TX:%lu RX:%lu ERR:%lu state=%d pots=%d,%d,%d btn=%d,%d\n",
+            g_can->getTxCount(), g_can->getRxCount(), g_can->getErrorCount(),
+            g_can->getState(), g_localPot1, g_localPot2, g_localPot3,
+            g_localBtn1, g_localBtn2);
     }
     updateLED();
 #if defined(ENABLE_OTA_WEBSERVER)
