@@ -14,8 +14,11 @@
 #ifndef CAN_RX_PIN
 #define CAN_RX_PIN 4
 #endif
-#ifndef CAN_SE_PIN
-#define CAN_SE_PIN -1
+#ifndef CAN_SPEED_MODE_PIN
+#define CAN_SPEED_MODE_PIN -1
+#endif
+#ifndef CAN_ME2107_EN_PIN
+#define CAN_ME2107_EN_PIN -1
 #endif
 #ifndef POT1_PIN
 #define POT1_PIN 6
@@ -52,10 +55,15 @@ static uint8_t prevButtons = 0xFF;
 static uint32_t lastSend = 0;
 static uint32_t lastHeartbeat = 0;
 static uint32_t lastLedUpdate = 0;
-static uint8_t ledR = 0, ledG = 20, ledB = 0;
-static uint8_t ledBrightness = 20;
+static uint8_t ledR = 0, ledG = 8, ledB = 0;
+static uint8_t ledBrightness = 255;
 static uint32_t identifyTimer = 0;
 static bool identifyActive = false;
+
+// Button debounce: require stable state for 50ms
+static uint32_t btn1Debounce = 0, btn2Debounce = 0;
+static bool btn1Raw = false, btn2Raw = false;
+static constexpr uint32_t DEBOUNCE_MS = 50;
 
 static const uint8_t ECU_NAME[8] = {
     0x00, 0x00, 0x00, 0x00,
@@ -67,8 +75,15 @@ static void readInputs() {
     g_localPot1 = analogRead(POT1_PIN);
     g_localPot2 = analogRead(POT2_PIN);
     g_localPot3 = analogRead(POT3_PIN);
-    g_localBtn1 = digitalRead(BTN1_PIN) == LOW;
-    g_localBtn2 = digitalRead(BTN2_PIN) == LOW;
+
+    // Debounce buttons: only accept state change after stable for DEBOUNCE_MS
+    uint32_t now = millis();
+    bool b1 = digitalRead(BTN1_PIN) == LOW;
+    bool b2 = digitalRead(BTN2_PIN) == LOW;
+    if (b1 != btn1Raw) { btn1Raw = b1; btn1Debounce = now; }
+    if (b2 != btn2Raw) { btn2Raw = b2; btn2Debounce = now; }
+    if (btn1Raw != g_localBtn1 && now - btn1Debounce >= DEBOUNCE_MS) g_localBtn1 = btn1Raw;
+    if (btn2Raw != g_localBtn2 && now - btn2Debounce >= DEBOUNCE_MS) g_localBtn2 = btn2Raw;
 }
 
 static void updateLED() {
@@ -120,12 +135,15 @@ static void processCAN() {
     while (g_can->receive(msg, 0)) {
         uint8_t pf = J1939_GET_PF(msg.id);
         uint8_t ps = J1939_GET_PS(msg.id);
+        Serial.printf("[CAN RX] ID=0x%08lX PF=0x%02X PS=0x%02X len=%d data=%02X %02X %02X\n",
+            msg.id, pf, ps, msg.len, msg.data[0], msg.data[1], msg.data[2]);
         if (pf == PF_LED_COLOR) {
             if (ps == DA_BROADCAST || ps == g_can->getAddress()) {
                 if (msg.len >= 3) {
                     ledR = msg.data[0];
                     ledG = msg.data[1];
                     ledB = msg.data[2];
+                    Serial.printf("[LED] Set color R=%d G=%d B=%d\n", ledR, ledG, ledB);
                 }
             }
         } else if (pf == PF_IDENTIFY) {
@@ -162,15 +180,23 @@ static void sendHeartbeat() {
 
 void ecu_setup() {
     strip.Begin();
-    strip.SetPixelColor(0, RgbColor(0, 20, 0));
+    // LED startup test: flash RGB
+    strip.SetPixelColor(0, RgbColor(255, 0, 0)); strip.Show(); delay(200);
+    strip.SetPixelColor(0, RgbColor(0, 255, 0)); strip.Show(); delay(200);
+    strip.SetPixelColor(0, RgbColor(0, 0, 255)); strip.Show(); delay(200);
+    strip.SetPixelColor(0, RgbColor(0, 20, 0));  // dim green = ready
     strip.Show();
     analogReadResolution(10);
     analogSetAttenuation(ADC_11db);
     pinMode(BTN1_PIN, INPUT_PULLUP);
     pinMode(BTN2_PIN, INPUT_PULLUP);
-#if CAN_SE_PIN >= 0
-    pinMode(CAN_SE_PIN, OUTPUT);
-    digitalWrite(CAN_SE_PIN, HIGH);  // Enable CAN transceiver
+#if CAN_ME2107_EN_PIN >= 0
+    pinMode(CAN_ME2107_EN_PIN, OUTPUT);
+    digitalWrite(CAN_ME2107_EN_PIN, HIGH);  // Enable CAN transceiver power supply
+#endif
+#if CAN_SPEED_MODE_PIN >= 0
+    pinMode(CAN_SPEED_MODE_PIN, OUTPUT);
+    digitalWrite(CAN_SPEED_MODE_PIN, LOW);  // High-speed mode (LOW = up to 1Mbps)
 #endif
     cfgMgr.begin();
     uint8_t forcedAddr = cfgMgr.getForcedAddress(ECU_PREFERRED_ADDRESS);
@@ -188,14 +214,12 @@ void ecu_setup() {
         }
     }
     Serial.printf("[Joystick%d] Ready on address 0x%02X.\n", ECU_JOYSTICK_ID, g_can->getAddress());
-    Serial.printf("[Joystick%d] CAN_TX=%d CAN_RX=%d CAN_SE=%d bitrate=%d\n",
-        ECU_JOYSTICK_ID, CAN_TX_PIN, CAN_RX_PIN, CAN_SE_PIN, CAN_BITRATE);
-#if CAN_SE_PIN >= 0
-    Serial.printf("[Joystick%d] CAN transceiver enabled (SE=HIGH)\n", ECU_JOYSTICK_ID);
-#endif
+    Serial.printf("[Joystick%d] CAN_TX=%d CAN_RX=%d SPEED_MODE=%d ME2107_EN=%d bitrate=%d\n",
+        ECU_JOYSTICK_ID, CAN_TX_PIN, CAN_RX_PIN, CAN_SPEED_MODE_PIN, CAN_ME2107_EN_PIN, CAN_BITRATE);
 #if defined(ENABLE_OTA_WEBSERVER)
+    // Start WiFi AFTER CAN. With proper transceiver init, TWAI is stable.
     char hostname[24];
-    snprintf(hostname, sizeof(hostname), "forwarder-joy%d-%02X", ECU_JOYSTICK_ID, g_can->getAddress());
+    snprintf(hostname, sizeof(hostname), "forwarder-joy%d-%02X", ECU_JOYSTICK_ID, forcedAddr);
     ota_setup(hostname);
 #endif
 }
@@ -205,48 +229,38 @@ void ecu_loop() {
     g_can->loop();
     readInputs();
     processCAN();
-    bool changed = false;
-    if (abs((int)g_localPot1 - (int)prevPot1) > 2) {
-        prevPot1 = g_localPot1;
-        sendPot(PF_JOYSTICK_POT1, g_localPot1);
-        changed = true;
-    }
-    if (abs((int)g_localPot2 - (int)prevPot2) > 2) {
-        prevPot2 = g_localPot2;
-        sendPot(PF_JOYSTICK_POT2, g_localPot2);
-        changed = true;
-    }
-    if (abs((int)g_localPot3 - (int)prevPot3) > 2) {
-        prevPot3 = g_localPot3;
-        sendPot(PF_JOYSTICK_POT3, g_localPot3);
-        changed = true;
-    }
-    uint8_t buttons = 0;
-    if (g_localBtn1) buttons |= 0x01;
-    if (g_localBtn2) buttons |= 0x02;
-    if (buttons != prevButtons) {
-        prevButtons = buttons;
-        sendButtons();
-        changed = true;
-    }
-    if (now - lastSend >= 100) {
+
+    // Send all data at max 25Hz (40ms interval)
+    if (now - lastSend >= 40) {
         lastSend = now;
-        if (!changed) {
-            sendPot(PF_JOYSTICK_POT1, g_localPot1);
-            sendPot(PF_JOYSTICK_POT2, g_localPot2);
-            sendPot(PF_JOYSTICK_POT3, g_localPot3);
-            sendButtons();
-        }
+        sendPot(PF_JOYSTICK_POT1, g_localPot1);
+        sendPot(PF_JOYSTICK_POT2, g_localPot2);
+        sendPot(PF_JOYSTICK_POT3, g_localPot3);
+        sendButtons();
+        prevPot1 = g_localPot1;
+        prevPot2 = g_localPot2;
+        prevPot3 = g_localPot3;
+        prevButtons = (g_localBtn1 ? 0x01 : 0) | (g_localBtn2 ? 0x02 : 0);
     }
     if (now - lastHeartbeat >= 1000) {
         lastHeartbeat = now;
         if (g_can->isOnline()) {
             sendHeartbeat();
         }
-        Serial.printf("[CAN] TX:%lu RX:%lu ERR:%lu state=%d pots=%d,%d,%d btn=%d,%d\n",
-            g_can->getTxCount(), g_can->getRxCount(), g_can->getErrorCount(),
-            g_can->getState(), g_localPot1, g_localPot2, g_localPot3,
-            g_localBtn1, g_localBtn2);
+        // TWAI-level diagnostics
+        twai_status_info_t twai_status;
+        if (twai_get_status_info(&twai_status) == ESP_OK) {
+            const char* state_names[] = {"STOPPED","RUNNING","BUS_OFF","REC"};
+            const char* sname = (twai_status.state < 4) ? state_names[twai_status.state] : "???";
+            Serial.printf("[CAN] TX:%lu RX:%lu ERR:%lu state=%d pots=%d,%d,%d btn=%d,%d\n",
+                g_can->getTxCount(), g_can->getRxCount(), g_can->getErrorCount(),
+                g_can->getState(), g_localPot1, g_localPot2, g_localPot3,
+                g_localBtn1, g_localBtn2);
+            Serial.printf("[TWAI] hw_state=%s msgs_to_tx=%lu msgs_to_rx=%lu tx_err=%lu rx_err=%lu arb_lost=%lu bus_err=%lu\n",
+                sname, twai_status.msgs_to_tx, twai_status.msgs_to_rx,
+                twai_status.tx_error_counter, twai_status.rx_error_counter,
+                twai_status.arb_lost_count, twai_status.bus_error_count);
+        }
     }
     updateLED();
 #if defined(ENABLE_OTA_WEBSERVER)

@@ -185,6 +185,7 @@ input[type="range"] {
     <button class="tab" onclick="switchTab('modules')">Modules</button>
     <button class="tab" onclick="switchTab('mapping')">Motor Mapping</button>
     <button class="tab" onclick="switchTab('canout')">CAN Output</button>
+    <button class="tab" onclick="switchTab('led')">LED Test</button>
     <button class="tab" onclick="switchTab('ota')">OTA Update</button>
 </div>
 
@@ -243,6 +244,45 @@ input[type="range"] {
         <div style="margin-top:12px;display:flex;gap:8px;">
             <button onclick="saveCanOut()">Save</button>
             <button class="secondary" onclick="fetchCanOut()">Refresh</button>
+        </div>
+    </div>
+</div>
+
+<div id="led" class="panel">
+    <div class="card">
+        <h3>WS2812 LED Color Tester</h3>
+        <p style="color:#94a3b8;font-size:0.85rem;margin:0 0 12px">Send a color command to the LED on this ECU via CAN.</p>
+        <div style="display:flex;align-items:center;gap:20px;margin-bottom:16px">
+            <div>
+                <label style="display:block;margin-bottom:4px;color:#94a3b8">Pick Color:</label>
+                <input type="color" id="ledColor" value="#ff0000" style="width:80px;height:40px;border:none;cursor:pointer">
+            </div>
+            <div id="ledPreview" style="width:80px;height:80px;border-radius:12px;background:#ff0000;border:2px solid #475569"></div>
+            <div>
+                <div class="info-row"><span>R:</span><span id="ledR">255</span></div>
+                <div class="info-row"><span>G:</span><span id="ledG">0</span></div>
+                <div class="info-row"><span>B:</span><span id="ledB">0</span></div>
+            </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button onclick="setLed()">Set LED Color</button>
+            <button class="secondary" onclick="setLedColor(255,0,0)">Red</button>
+            <button class="secondary" onclick="setLedColor(0,255,0)">Green</button>
+            <button class="secondary" onclick="setLedColor(0,0,255)">Blue</button>
+            <button class="secondary" onclick="setLedColor(255,255,255)">White</button>
+            <button class="secondary" onclick="setLedColor(0,0,0)">Off</button>
+        </div>
+        <div style="margin-top:16px">
+            <label style="display:block;margin-bottom:4px;color:#94a3b8">Target:</label>
+            <select id="ledTarget">
+                <option value="255">Broadcast (all ECUs)</option>
+                <option value="33">Joystick 1 (0x21)</option>
+                <option value="34">Joystick 2 (0x22)</option>
+            </select>
+        </div>
+        <div style="margin-top:16px;padding:12px;background:#0f172a;border-radius:8px;font-family:monospace;font-size:0.8rem">
+            <div>CAN ID: <span id="ledCanId">0x1820FF00</span></div>
+            <div>Data: <span id="ledCanData">FF 00 00 00 00 00 00 00</span></div>
         </div>
     </div>
 </div>
@@ -387,6 +427,59 @@ async function identify(addr) {
         setStatus('Identify sent to 0x' + addr.toString(16).toUpperCase(), 'success');
     } catch(e) { setStatus('Failed', 'error'); }
 }
+
+// LED Tester functions
+function updateLedPreview() {
+    const color = document.getElementById('ledColor').value;
+    const r = parseInt(color.substr(1,2), 16);
+    const g = parseInt(color.substr(3,2), 16);
+    const b = parseInt(color.substr(5,2), 16);
+    document.getElementById('ledPreview').style.background = color;
+    document.getElementById('ledR').textContent = r;
+    document.getElementById('ledG').textContent = g;
+    document.getElementById('ledB').textContent = b;
+    const target = parseInt(document.getElementById('ledTarget').value);
+    const canId = (0x18200000 | (target << 8)).toString(16).toUpperCase().padStart(8, '0');
+    document.getElementById('ledCanId').textContent = '0x' + canId;
+    document.getElementById('ledCanData').textContent = 
+        r.toString(16).toUpperCase().padStart(2,'0') + ' ' +
+        g.toString(16).toUpperCase().padStart(2,'0') + ' ' +
+        b.toString(16).toUpperCase().padStart(2,'0') + ' 00 00 00 00 00';
+}
+
+async function setLed() {
+    const color = document.getElementById('ledColor').value;
+    const r = parseInt(color.substr(1,2), 16);
+    const g = parseInt(color.substr(3,2), 16);
+    const b = parseInt(color.substr(5,2), 16);
+    const target = parseInt(document.getElementById('ledTarget').value);
+    await setLedTarget(r, g, b, target);
+}
+
+async function setLedColor(r, g, b) {
+    const target = parseInt(document.getElementById('ledTarget').value);
+    document.getElementById('ledColor').value = '#' + 
+        r.toString(16).padStart(2,'0') + 
+        g.toString(16).padStart(2,'0') + 
+        b.toString(16).padStart(2,'0');
+    updateLedPreview();
+    await setLedTarget(r, g, b, target);
+}
+
+async function setLedTarget(r, g, b, target) {
+    try {
+        await fetch('/api/led', { method: 'POST', headers: {'Content-Type':'application/json'}, 
+            body: JSON.stringify({r: r, g: g, b: b, target: target}) });
+        setStatus('LED color sent (R=' + r + ' G=' + g + ' B=' + b + ')', 'success');
+    } catch(e) { setStatus('Failed', 'error'); }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const colorPicker = document.getElementById('ledColor');
+    const targetSelect = document.getElementById('ledTarget');
+    if (colorPicker) colorPicker.addEventListener('input', updateLedPreview);
+    if (targetSelect) targetSelect.addEventListener('change', updateLedPreview);
+});
 
 async function setAddr(current) {
     const newAddr = parseInt(document.getElementById('addr_' + current).value);
@@ -645,6 +738,20 @@ static void handleIdentify() {
     server.send(200, "application/json", "{\"ok\":true}");
 }
 
+static void handleLed() {
+    if (server.hasArg("plain") && g_can) {
+        String body = server.arg("plain");
+        int r = parseJsonInt(body, "r", 0);
+        int g = parseJsonInt(body, "g", 0);
+        int b = parseJsonInt(body, "b", 0);
+        int target = parseJsonInt(body, "target", 0);
+        uint8_t data[8] = { (uint8_t)r, (uint8_t)g, (uint8_t)b, 0, 0, 0, 0, 0 };
+        g_can->send(PF_LED_COLOR, target, data, 3, 6);
+        Serial.printf("[LED] Web UI set color R=%d G=%d B=%d target=0x%02X\n", r, g, b, target);
+    }
+    server.send(200, "application/json", "{\"ok\":true}");
+}
+
 static void handleAddress() {
     if (server.hasArg("plain") && g_can) {
         String body = server.arg("plain");
@@ -782,6 +889,7 @@ void ota_setup(const char* hostname) {
     server.on("/api/config", HTTP_GET, handleConfigGet);
     server.on("/api/config", HTTP_POST, handleConfigPost);
     server.on("/api/identify", HTTP_POST, handleIdentify);
+    server.on("/api/led", HTTP_POST, handleLed);
     server.on("/api/address", HTTP_POST, handleAddress);
     server.on("/api/canoutput", HTTP_GET, handleCanOutputGet);
     server.on("/api/canoutput", HTTP_POST, handleCanOutputPost);

@@ -116,4 +116,7 @@ private:
     uint32_t _errCount = 0;
 
     bool _twaiStarted = false;
+    int _txPin = 0;
+    int _rxPin = 0;
+    uint32_t _bitrate = 250000;
 };

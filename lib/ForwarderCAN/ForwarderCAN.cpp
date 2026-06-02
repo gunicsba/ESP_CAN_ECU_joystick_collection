@@ -11,6 +11,10 @@ ForwarderCAN::ForwarderCAN(uint8_t preferredAddress, const uint8_t name[8])
 }
 
 bool ForwarderCAN::begin(int txPin, int rxPin, uint32_t bitrate) {
+    _txPin = txPin;
+    _rxPin = rxPin;
+    _bitrate = bitrate;
+
     twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(
         (gpio_num_t)txPin, (gpio_num_t)rxPin, TWAI_MODE_NORMAL);
     g_config.tx_queue_len = 16;
@@ -39,12 +43,12 @@ bool ForwarderCAN::begin(int txPin, int rxPin, uint32_t bitrate) {
 
     _twaiStarted = true;
 
-    // Enter bus-off recovery if needed
-    twai_status_info_t status;
-    twai_get_status_info(&status);
-    if (status.state == TWAI_STATE_BUS_OFF) {
-        twai_initiate_recovery();
-    }
+    // Configure alerts (per manufacturer recommendation)
+    uint32_t alerts = TWAI_ALERT_TX_IDLE | TWAI_ALERT_TX_SUCCESS |
+                      TWAI_ALERT_TX_FAILED | TWAI_ALERT_ERR_PASS |
+                      TWAI_ALERT_BUS_ERROR | TWAI_ALERT_RX_DATA |
+                      TWAI_ALERT_RX_QUEUE_FULL;
+    twai_reconfigure_alerts(alerts, NULL);
 
     // Start address claiming
     tryClaimAddress();
@@ -79,14 +83,24 @@ void ForwarderCAN::sendAddressClaimed() {
 void ForwarderCAN::loop() {
     if (!_twaiStarted) return;
 
-    // Check bus state and recover if bus-off
+    // Check bus state and recover
     twai_status_info_t status;
     if (twai_get_status_info(&status) == ESP_OK) {
+        if (status.state == TWAI_STATE_STOPPED) {
+            Serial.println("[CAN] TWAI stopped, restarting...");
+            twai_start();
+            delay(10);
+            return;
+        }
         if (status.state == TWAI_STATE_BUS_OFF) {
             twai_initiate_recovery();
             _errCount++;
         }
     }
+
+    // Read alerts to clear them
+    uint32_t alerts;
+    twai_read_alerts(&alerts, 0);
 
     // Address claiming state machine
     if (_state == ACS_CLAIMING) {
@@ -146,6 +160,12 @@ bool ForwarderCAN::send(uint8_t pf, uint8_t ps, const uint8_t* data, uint8_t len
     if (_state != ACS_CLAIMED && pf != J1939_PF_ADDRESS_CLAIMED) return false;
     if (len > 8) len = 8;
 
+    // Check if TWAI is actually running before attempting transmit
+    twai_status_info_t status;
+    if (twai_get_status_info(&status) != ESP_OK || status.state != TWAI_STATE_RUNNING) {
+        return false;
+    }
+
     uint32_t id = J1939_MAKE_ID(priority, 0, pf, ps, _currentAddress);
     twai_message_t msg;
     msg.identifier = id;
@@ -182,6 +202,9 @@ bool ForwarderCAN::receive(CANMessage& msg, uint32_t timeoutMs) {
         if (msg.len > 8) msg.len = 8;
         memcpy(msg.data, rxMsg.data, msg.len);
         _rxCount++;
+        // Debug: print all received messages
+        Serial.printf("[CAN RX] ID=0x%08lX ext=%d len=%d self=%d\n", 
+            msg.id, msg.ext, msg.len, rxMsg.self);
         return true;
     }
     return false;
