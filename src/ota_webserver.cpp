@@ -377,6 +377,7 @@ function renderModules() {
 function renderMapping() {
     const axes = gConfig.axes || [];
     let h = '<div class="axis-row header"><div>#</div><div>En</div><div>Src</div><div>Pot</div><div>Ch</div><div>Deadband Min-Max</div><div>PWM Min-Max</div><div>DB Min</div><div>DB Max</div><div>Bidir</div></div>';
+    h += '<div style="padding:4px 8px;color:#94a3b8;font-size:0.75rem;grid-column:1/-1">Bidirectional axes use paired channels: Ch=fwd, Ch+1=rev (e.g. Ch0+1, Ch2+3)</div>';
     for (let i = 0; i < 16; i++) {
         const a = axes[i] || { sourceAddress: 0, potIndex: 0, outputChannel: i, deadbandMin: 492, deadbandMax: 532, pwmMin: 64, pwmMax: 128, flags: 0 };
         const en = (a.flags & 1) ? 'checked' : '';
@@ -870,6 +871,19 @@ static void scanHeartbeats() {
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+void ota_trackModule(uint8_t sa, const CANMessage& msg) {
+    g_modules[sa].lastSeen = millis();
+    g_modules[sa].addr = sa;
+    g_modules[sa].uptime = msg.data[0] | ((uint16_t)msg.data[1] << 8);
+    g_modules[sa].data5 = msg.data[5];
+    if (msg.data[5] == 16 || msg.data[5] == 8) {
+        g_modules[sa].type = 1; // Motor driver
+    } else if (msg.data[3] == 1 || msg.data[3] == 2) {
+        g_modules[sa].type = 2; // Joystick
+    }
+}
+
 void ota_setup(const char* hostname) {
     WiFi.mode(WIFI_AP);
     String ssid = String(hostname);
@@ -900,7 +914,7 @@ void ota_setup(const char* hostname) {
 
 void ota_loop() {
     server.handleClient();
-    scanHeartbeats();
+    // scanHeartbeats removed - processCAN() handles all incoming messages
 }
 
 bool ota_is_active() {

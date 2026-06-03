@@ -11,9 +11,19 @@
 - [can_output.cpp](file://src/can_output.cpp)
 - [can_output.h](file://src/can_output.h)
 - [ForwarderCAN.h](file://lib/ForwarderCAN/ForwarderCAN.h)
+- [ecu_motor_driver.cpp](file://src/ecu_motor_driver.cpp)
+- [ecu_joystick.cpp](file://src/ecu_joystick.cpp)
 - [main.cpp](file://src/main.cpp)
 - [platformio.ini](file://platformio.ini)
 </cite>
+
+## Update Summary
+**Changes Made**
+- Added new LED testing interface section documenting the LED control capabilities
+- Updated HTTP API endpoints section to include the new `/api/led` endpoint
+- Enhanced JSON data structures section with LED color payload documentation
+- Updated architecture diagrams to show LED control flow
+- Added LED testing interface user experience documentation
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -21,42 +31,48 @@
 3. [Core Components](#core-components)
 4. [Architecture Overview](#architecture-overview)
 5. [Detailed Component Analysis](#detailed-component-analysis)
-6. [Dependency Analysis](#dependency-analysis)
-7. [Performance Considerations](#performance-considerations)
-8. [Troubleshooting Guide](#troubleshooting-guide)
-9. [Security Considerations](#security-considerations)
-10. [Conclusion](#conclusion)
+6. [LED Testing Interface](#led-testing-interface)
+7. [Dependency Analysis](#dependency-analysis)
+8. [Performance Considerations](#performance-considerations)
+9. [Troubleshooting Guide](#troubleshooting-guide)
+10. [Security Considerations](#security-considerations)
+11. [Conclusion](#conclusion)
 
 ## Introduction
-This document explains how the web interface integrates with ForwarderKE’s configuration management system. It covers the data flow between Non-Volatile Storage (NVS), the embedded web server, and real-time state exposure. It documents the HTTP API endpoints for retrieving and modifying configuration, the JSON structures used for transfers, and the real-time synchronization mechanisms. It also describes the shared state integration via web_state, the propagation of configuration changes across components, and the user interface behavior for configuration management. Finally, it includes practical examples, troubleshooting guidance, and security considerations.
+This document explains how the web interface integrates with ForwarderKE's configuration management system. It covers the data flow between Non-Volatile Storage (NVS), the embedded web server, and real-time state exposure. It documents the HTTP API endpoints for retrieving and modifying configuration, the JSON structures used for transfers, and the real-time synchronization mechanisms. It also describes the shared state integration via web_state, the propagation of configuration changes across components, and the user interface behavior for configuration management. The web interface now includes a comprehensive LED testing capability that allows users to control WS2812 LEDs on ECU devices via CAN bus communication. Finally, it includes practical examples, troubleshooting guidance, and security considerations.
 
 ## Project Structure
-The web interface is implemented as an embedded HTTP server that serves both a dashboard UI and a set of REST-like endpoints. Configuration data is persisted in NVS via the ForwarderConfig library and synchronized with runtime state exposed through web_state. The CAN bus is managed by ForwarderCAN, and CAN-triggered GPIO outputs are configured via can_output.
+The web interface is implemented as an embedded HTTP server that serves both a dashboard UI and a set of REST-like endpoints. Configuration data is persisted in NVS via the ForwarderConfig library and synchronized with runtime state exposed through web_state. The CAN bus is managed by ForwarderCAN, and CAN-triggered GPIO outputs are configured via can_output. The LED testing interface provides real-time color control and visualization capabilities.
 
 ```mermaid
 graph TB
 subgraph "Embedded Web Server"
 WS["ota_webserver<br/>HTTP handlers + UI"]
+LED["LED Testing Interface<br/>Real-time color control"]
 end
 subgraph "Runtime State"
 WSH["web_state.h/.cpp<br/>globals for UI/API"]
 CAN["ForwarderCAN<br/>CAN bus"]
 CO["can_output<br/>CAN-triggered GPIO"]
+LEDCTRL["LED Control<br/>WS2812 LED handling"]
 end
 subgraph "Configuration Store"
 FCPP["ForwarderConfig<br/>NVS persistence"]
-end
+END
 subgraph "ECU Logic"
 ECU["ECU-specific logic<br/>(joystick/motor driver)"]
-end
+END
 WS --> WSH
 WS --> FCPP
 WS --> CAN
 WS --> CO
+WS --> LED
 WSH --> FCPP
 WSH --> CAN
 WSH --> CO
+WSH --> LEDCTRL
 ECU --> WSH
+ECU --> LEDCTRL
 ```
 
 **Diagram sources**
@@ -65,17 +81,20 @@ ECU --> WSH
 - [ForwarderConfig.h:64-91](file://lib/ForwarderConfig/ForwarderConfig.h#L64-L91)
 - [ForwarderCAN.h:66-119](file://lib/ForwarderCAN/ForwarderCAN.h#L66-L119)
 - [can_output.h:7-11](file://src/can_output.h#L7-L11)
+- [ecu_motor_driver.cpp:219-226](file://src/ecu_motor_driver.cpp#L219-L226)
+- [ecu_joystick.cpp:138-145](file://src/ecu_joystick.cpp#L138-L145)
 
 **Section sources**
 - [platformio.ini:17-80](file://platformio.ini#L17-L80)
 - [main.cpp:11-17](file://src/main.cpp#L11-L17)
 
 ## Core Components
-- Embedded web server and UI: Serves HTML and JSON endpoints for configuration and telemetry.
+- Embedded web server and UI: Serves HTML and JSON endpoints for configuration and telemetry, including the new LED testing interface.
 - Runtime state exposure: Exposes joystick, solenoid, module, and CAN statistics to the UI.
 - Configuration persistence: NVS-backed storage for axis mapping and CAN output rules.
 - CAN integration: Real-time CAN message processing and broadcasting of configuration updates.
 - CAN-triggered GPIO outputs: Rules that react to incoming CAN frames to control relays or LEDs.
+- LED testing interface: Real-time WS2812 LED color control with visual feedback and target selection.
 
 **Section sources**
 - [ota_webserver.cpp:506-796](file://src/ota_webserver.cpp#L506-L796)
@@ -86,10 +105,11 @@ ECU --> WSH
 
 ## Architecture Overview
 The web interface architecture centers on a single-file embedded HTTP server that:
-- Serves a responsive dashboard with tabs for Dashboard, Modules, Motor Mapping, CAN Output, and OTA Update.
-- Provides JSON APIs for state (/api/state), configuration (/api/config), CAN output rules (/api/canoutput), and administrative actions (/api/identify, /api/address).
+- Serves a responsive dashboard with tabs for Dashboard, Modules, Motor Mapping, CAN Output, LED Test, and OTA Update.
+- Provides JSON APIs for state (/api/state), configuration (/api/config), CAN output rules (/api/canoutput), LED control (/api/led), and administrative actions (/api/identify, /api/address).
 - Reads and writes configuration to NVS via ForwarderConfig.
 - Publishes real-time telemetry and state to the UI using periodic polling.
+- Processes LED color commands via CAN bus to control WS2812 LEDs on target ECUs.
 
 ```mermaid
 sequenceDiagram
@@ -99,6 +119,7 @@ participant State as "web_state"
 participant Config as "ForwarderConfig"
 participant CAN as "ForwarderCAN"
 participant CO as "can_output"
+participant LED as "LED Control"
 Browser->>Server : GET / (HTML)
 Server-->>Browser : HTML page with JS
 Browser->>Server : GET /api/state
@@ -112,7 +133,13 @@ Server->>State : Update g_motorCfg.axes[]
 Server->>Config : Save axis config (NVS)
 Server->>CAN : Broadcast PF_CONFIG_AXIS (joystick)
 Server-->>Browser : {"ok" : true}
-Server->>CO : Re-init outputs (motor driver)
+Browser->>Server : POST /api/led {r,g,b,target}
+Server->>CAN : Send PF_LED_COLOR to target
+Server->>LED : Update WS2812 LED color
+Server-->>Browser : {"ok" : true}
+Browser->>Server : POST /api/canoutput {rules[]}
+Server->>Config : Save CAN output rules (NVS)
+Server->>CO : Re-init outputs
 Server-->>Browser : {"ok" : true}
 ```
 
@@ -122,6 +149,8 @@ Server-->>Browser : {"ok" : true}
 - [ForwarderConfig.cpp:76-127](file://lib/ForwarderConfig/ForwarderConfig.cpp#L76-L127)
 - [ForwarderCAN.h:38-51](file://lib/ForwarderCAN/ForwarderCAN.h#L38-L51)
 - [can_output.cpp:7-61](file://src/can_output.cpp#L7-L61)
+- [ecu_motor_driver.cpp:219-226](file://src/ecu_motor_driver.cpp#L219-L226)
+- [ecu_joystick.cpp:138-145](file://src/ecu_joystick.cpp#L138-L145)
 
 ## Detailed Component Analysis
 
@@ -141,11 +170,14 @@ Server-->>Browser : {"ok" : true}
   - Returns rules array with fields: enabled, matchPF, matchSA, gpioPin, mode, momentaryMs.
 - POST /api/canoutput
   - Accepts rules array payload; updates runtime rules, persists to NVS on motor driver, and re-initializes GPIO outputs.
+- POST /api/led
+  - Accepts RGB color payload with target address; sends PF_LED_COLOR CAN message to control WS2812 LED on target ECU.
 - POST /update
   - Handles OTA firmware update via multipart upload.
 
 **Section sources**
 - [ota_webserver.cpp:506-703](file://src/ota_webserver.cpp#L506-L703)
+- [ota_webserver.cpp:741-753](file://src/ota_webserver.cpp#L741-L753)
 
 ### JSON Data Structures
 - State object (GET /api/state):
@@ -167,19 +199,26 @@ Server-->>Browser : {"ok" : true}
   - rules: array of 4 entries; each entry has enabled, matchPF, matchSA, gpioPin, mode, momentaryMs
 - CAN output rules payload (POST /api/canoutput):
   - rules: array of 4 entries; each entry includes ruleIdx and all rule fields
+- LED color payload (POST /api/led):
+  - r: number (0-255)
+  - g: number (0-255)
+  - b: number (0-255)
+  - target: number (0x21 for joystick 1, 0x22 for joystick 2, 0xFF for broadcast)
 
 **Section sources**
 - [ota_webserver.cpp:510-584](file://src/ota_webserver.cpp#L510-L584)
 - [ForwarderConfig.h:41-57](file://lib/ForwarderConfig/ForwarderConfig.h#L41-L57)
 - [ForwarderConfig.h:29-39](file://lib/ForwarderConfig/ForwarderConfig.h#L29-L39)
+- [ota_webserver.cpp:741-753](file://src/ota_webserver.cpp#L741-L753)
 
 ### Real-Time State Management and Synchronization
-- Periodic polling: The UI polls /api/state every 200 ms, and also fetches /api/config and /api/canoutput on tab load.
+- Periodic polling: The UI polls /api/state every 200 ms, and also fetches /api/config, /api/canoutput, and /api/led on tab load.
 - State exposure: The web server reads from global arrays and structs exported by web_state (joystick pots/buttons, solenoid values, motor config, CAN stats, module registry).
 - CAN-driven updates: The server scans heartbeat frames to populate the modules list and to detect module types heuristically.
 - Propagation:
   - On joystick ECU, saving axis mapping triggers broadcast of PF_CONFIG_AXIS to the motor driver.
   - On motor driver ECU, saving CAN output rules triggers re-initialization of GPIO outputs and persistence to NVS.
+  - LED color changes are transmitted immediately via CAN bus to target ECUs.
 
 ```mermaid
 flowchart TD
@@ -189,6 +228,8 @@ Start --> FetchConfig["Fetch /api/config"]
 FetchConfig --> RenderConfig["Render mapping controls"]
 Start --> FetchCanOut["Fetch /api/canoutput"]
 FetchCanOut --> RenderCanOut["Render CAN output rules"]
+Start --> FetchLED["Fetch /api/led"]
+FetchLED --> RenderLED["Render LED preview"]
 SaveMapping["User clicks Save Mapping"] --> PostConfig["POST /api/config"]
 PostConfig --> Persist["Persist to NVS (motor driver)"]
 PostConfig --> Broadcast["Broadcast PF_CONFIG_AXIS (joystick)"]
@@ -198,12 +239,18 @@ SaveCanOut["User clicks Save CAN Output"] --> PostCanOut["POST /api/canoutput"]
 PostCanOut --> Persist2["Persist to NVS (motor driver)"]
 Persist2 --> Reinit["Re-init GPIO outputs"]
 Reinit --> Done2(["Done"])
+SetLED["User sets LED color"] --> PostLED["POST /api/led"]
+PostLED --> SendCAN["Send PF_LED_COLOR via CAN"]
+SendCAN --> UpdateLED["Update WS2812 LED"]
+UpdateLED --> Done3(["Done"])
 ```
 
 **Diagram sources**
 - [ota_webserver.cpp:360-497](file://src/ota_webserver.cpp#L360-L497)
 - [ota_webserver.cpp:587-703](file://src/ota_webserver.cpp#L587-L703)
 - [web_state.h:8-23](file://src/web_state.h#L8-L23)
+- [ecu_motor_driver.cpp:219-226](file://src/ecu_motor_driver.cpp#L219-L226)
+- [ecu_joystick.cpp:138-145](file://src/ecu_joystick.cpp#L138-L145)
 
 **Section sources**
 - [ota_webserver.cpp:494-497](file://src/ota_webserver.cpp#L494-L497)
@@ -244,6 +291,7 @@ class web_state_h {
 - Propagation:
   - Motor driver: Saving axis mapping or CAN output rules persists to NVS and reinitializes outputs.
   - Joystick ECU: Saving axis mapping broadcasts PF_CONFIG_AXIS to the motor driver.
+  - LED control: Immediate CAN transmission of color commands to target ECUs.
 
 ```mermaid
 sequenceDiagram
@@ -252,6 +300,7 @@ participant WS as "ota_webserver"
 participant NVS as "ForwarderConfig"
 participant MD as "Motor Driver ECU"
 participant JS as "Joystick ECU"
+participant LED as "LED Control"
 UI->>WS : POST /api/config {axes[]}
 WS->>NVS : saveAxisConfig(axisIdx, axis)
 WS->>JS : send PF_CONFIG_AXIS
@@ -260,6 +309,9 @@ UI->>WS : POST /api/canoutput {rules[]}
 WS->>NVS : saveCanOutputRule(idx, rule)
 WS->>MD : re-init GPIO outputs
 WS-->>UI : {"ok" : true}
+UI->>WS : POST /api/led {r,g,b,target}
+WS->>LED : update WS2812 LED
+WS-->>UI : {"ok" : true}
 ```
 
 **Diagram sources**
@@ -267,6 +319,8 @@ WS-->>UI : {"ok" : true}
 - [ForwarderConfig.cpp:161-169](file://lib/ForwarderConfig/ForwarderConfig.cpp#L161-L169)
 - [ota_webserver.cpp:609-621](file://src/ota_webserver.cpp#L609-L621)
 - [ota_webserver.cpp:692-701](file://src/ota_webserver.cpp#L692-L701)
+- [ecu_motor_driver.cpp:219-226](file://src/ecu_motor_driver.cpp#L219-L226)
+- [ecu_joystick.cpp:138-145](file://src/ecu_joystick.cpp#L138-L145)
 
 **Section sources**
 - [ForwarderConfig.cpp:76-127](file://lib/ForwarderConfig/ForwarderConfig.cpp#L76-L127)
@@ -301,19 +355,59 @@ Timer --> End
 - [ForwarderCAN.h:38-51](file://lib/ForwarderCAN/ForwarderCAN.h#L38-L51)
 
 ### User Interface for Configuration Management
-- Tabs: Dashboard, Modules, Motor Mapping, CAN Output, OTA Update.
+- Tabs: Dashboard, Modules, Motor Mapping, CAN Output, LED Test, OTA Update.
 - Real-time feedback: Status toast notifications for success/failure of operations.
 - Form controls:
   - Motor Mapping: Enable checkbox, source address dropdown (0x21/0x22), pot selection, output channel, deadband sliders, PWM range inputs, bidirectional flag.
   - CAN Output: Enable checkbox, PF/SA match fields, GPIO pin selector, mode selector (toggle/momentary), momentary duration.
+  - LED Test: Color picker, RGB value displays, preset color buttons (Red, Green, Blue, White, Off), target selection (Broadcast, Joystick 1, Joystick 2).
 - Validation and UX:
-  - Range constraints on inputs (e.g., 0–1023 for deadband, 0–255 for PWM).
-  - Immediate visual feedback via sliders and bars.
+  - Range constraints on inputs (e.g., 0–1023 for deadband, 0–255 for PWM, 0–255 for LED RGB).
+  - Immediate visual feedback via sliders, bars, and live LED preview.
   - Refresh and Save actions per section.
 
 **Section sources**
 - [ota_webserver.cpp:32-501](file://src/ota_webserver.cpp#L32-L501)
 - [ota_webserver.cpp:337-471](file://src/ota_webserver.cpp#L337-L471)
+- [ota_webserver.cpp:251-288](file://src/ota_webserver.cpp#L251-L288)
+
+## LED Testing Interface
+
+### LED Control Features
+The LED testing interface provides comprehensive control over WS2812 LEDs connected to ECU devices:
+
+- **Real-time Color Preview**: Live RGB color visualization with hex value display
+- **Multiple Input Methods**: 
+  - Color picker for precise color selection
+  - Preset buttons for common colors (Red, Green, Blue, White, Off)
+  - Direct RGB value input with validation
+- **Target Selection**: Choose between broadcast (all ECUs), joystick 1 (0x21), or joystick 2 (0x22)
+- **CAN Protocol Integration**: Uses PF_LED_COLOR (0x20) protocol for LED control
+- **Visual Feedback**: Immediate LED updates and status notifications
+
+### LED Control Workflow
+1. User selects color via picker or preset button
+2. RGB values are extracted and validated (0-255 range)
+3. Target ECU address is selected (broadcast or specific)
+4. Web server sends POST /api/led with color data
+5. CAN message with PF_LED_COLOR is transmitted to target ECU
+6. Target ECU processes LED command and updates WS2812 LED
+7. Status notification confirms successful operation
+
+### CAN LED Protocol
+- **Protocol Function**: PF_LED_COLOR (0x20)
+- **Data Format**: 3-byte RGB values (R, G, B)
+- **Target Address**: Broadcast (0xFF) or specific ECU address
+- **Implementation**: Both joystick and motor driver ECUs support LED color commands
+- **Processing**: ECUs update their onboard WS2812 LEDs with received color values
+
+**Section sources**
+- [ota_webserver.cpp:251-288](file://src/ota_webserver.cpp#L251-L288)
+- [ota_webserver.cpp:431-482](file://src/ota_webserver.cpp#L431-L482)
+- [ota_webserver.cpp:741-753](file://src/ota_webserver.cpp#L741-L753)
+- [ForwarderCAN.h:42-43](file://lib/ForwarderCAN/ForwarderCAN.h#L42-43)
+- [ecu_motor_driver.cpp:219-226](file://src/ecu_motor_driver.cpp#L219-L226)
+- [ecu_joystick.cpp:138-145](file://src/ecu_joystick.cpp#L138-L145)
 
 ## Dependency Analysis
 - Build flags control ECU type and enable the embedded web server:
@@ -324,6 +418,7 @@ Timer --> End
   - ForwarderConfig for NVS-backed configuration.
   - web_state for shared runtime state.
   - can_output for CAN-triggered GPIO outputs.
+  - LED control libraries for WS2812 LED management.
 
 ```mermaid
 graph LR
@@ -333,6 +428,7 @@ WS --> CAN["ForwarderCAN"]
 WS --> CFG["ForwarderConfig"]
 WS --> WS_STATE["web_state"]
 WS --> CO["can_output"]
+WS --> LED["LED Control"]
 ```
 
 **Diagram sources**
@@ -348,9 +444,10 @@ WS --> CO["can_output"]
 - JSON construction: The server builds JSON strings manually; keep payloads concise and avoid unnecessary fields.
 - NVS writes: Persisting configuration occurs on each change; consider batching or debouncing in future enhancements.
 - CAN processing: Matching and GPIO toggling are O(RULES) per frame; ensure rule count remains small.
+- LED updates: LED color commands are transmitted immediately via CAN; monitor bus utilization for multiple LED updates.
 
 ## Troubleshooting Guide
-- UI shows “No modules detected”
+- UI shows "No modules detected"
   - Ensure CAN bus is connected and modules are powered; verify heartbeats are received and processed.
   - Check that the server is scanning heartbeats and updating the module registry.
 - Changes to Motor Mapping do not take effect
@@ -359,6 +456,11 @@ WS --> CO["can_output"]
 - CAN Output rules not triggering GPIO
   - Confirm PF/SA match values and GPIO pin assignment.
   - Check rule mode and momentaryMs; ensure GPIO pin is configured and not conflicting.
+- LED control not working
+  - Verify target ECU is powered and responding to CAN messages.
+  - Check that PF_LED_COLOR protocol is supported by target ECU.
+  - Ensure LED hardware is properly connected and configured.
+  - Confirm CAN bus connectivity and proper addressing.
 - OTA update fails
   - Verify file selection and network connectivity; check server logs for errors during upload.
 
@@ -373,6 +475,7 @@ WS --> CO["can_output"]
 - Transport security: No TLS termination is present; sensitive operations should be performed behind firewalls or VPNs.
 - Input sanitization: The server performs minimal JSON parsing; ensure client-side validation and server-side bounds checking remain robust.
 - Operational hygiene: Rotate credentials for any external integrations and limit exposure of administrative endpoints.
+- LED security: LED color commands can be sent to any ECU; ensure physical security of ECU devices and consider access restrictions in sensitive environments.
 
 ## Conclusion
-The web interface provides a cohesive bridge between NVS configuration, real-time CAN telemetry, and user-driven modifications. It exposes a clean set of JSON endpoints for state and configuration, with straightforward workflows for saving mapping and CAN output rules. The system propagates changes across components using CAN broadcasts and NVS persistence, while the UI offers immediate feedback and responsive controls. For production deployments, prioritize network isolation and operational security to mitigate risks associated with the unauthenticated embedded HTTP server.
+The web interface provides a cohesive bridge between NVS configuration, real-time CAN telemetry, and user-driven modifications. It exposes a clean set of JSON endpoints for state and configuration, with straightforward workflows for saving mapping, CAN output rules, and LED color control. The system propagates changes across components using CAN broadcasts and NVS persistence, while the UI offers immediate feedback and responsive controls. The addition of LED testing capabilities expands the interface's utility for hardware debugging and visual verification. For production deployments, prioritize network isolation and operational security to mitigate risks associated with the unauthenticated embedded HTTP server.

@@ -6,11 +6,22 @@
 - [platformio.ini](file://platformio.ini)
 - [src/main.cpp](file://src/main.cpp)
 - [src/ecu_motor_driver.cpp](file://src/ecu_motor_driver.cpp)
+- [src/ecu_motor_driver.h](file://src/ecu_motor_driver.h)
 - [src/ecu_joystick.cpp](file://src/ecu_joystick.cpp)
+- [src/ecu_joystick.h](file://src/ecu_joystick.h)
 - [src/can_output.cpp](file://src/can_output.cpp)
+- [src/can_output.h](file://src/can_output.h)
 - [src/web_state.h](file://src/web_state.h)
 - [src/web_state.cpp](file://src/web_state.cpp)
+- [lib/ForwarderCAN/ForwarderCAN.h](file://lib/ForwarderCAN/ForwarderCAN.h)
 </cite>
+
+## Update Summary
+**Changes Made**
+- Updated MCU specification from ESP32-S3 to standard ESP32 microcontrollers
+- Replaced generic CAN_SE_PIN naming with new CAN_ME2107_EN_PIN and CAN_SPEED_MODE_PIN conventions
+- Updated pin assignments for T-CAN485 board with correct GPIO mappings
+- Revised CAN transceiver control methodology for TJA1050-based boards
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -53,7 +64,7 @@ E --> F["src/web_state.cpp<br/>Default definitions"]
 - [README.md:112-126](file://README.md#L112-L126)
 
 ## Core Components
-- MCU and Board: ESP32-S3-based LilyGO T-CAN board with integrated CAN transceiver.
+- MCU and Board: Standard ESP32-based LilyGO T-CAN board with integrated TJA1050 CAN transceiver.
 - CAN Bus: 250 kbps, 29-bit extended IDs using J1939-like addressing.
 - Motor Driver ECU: Controls up to 16 solenoids via PCA9685 I2C PWM drivers.
 - Joystick ECUs: Read 3 potentiometers and 2 buttons, publish joystick data on CAN.
@@ -96,17 +107,21 @@ LED_JS2["WS2812 LED (Joystick 2)"] --- JS2
 
 ## Detailed Component Analysis
 
-### ESP32-S3 LilyGO T-CAN Board and CAN Transceiver
-- Built-in CAN transceiver pins are mapped to MCU GPIOs.
-- Motor Driver ECU uses GPIO 5 (TX) and GPIO 4 (RX) for CAN.
-- Joystick ECUs define separate CAN pins and optional SE pin for transceiver enable.
+### Standard ESP32 LilyGO T-CAN Board and TJA1050 CAN Transceiver
+- Built-in TJA1050 CAN transceiver pins are mapped to MCU GPIOs.
+- Motor Driver ECU uses GPIO 5 (TX) and GPIO 4 (RX) for CAN communication.
+- Joystick ECUs define separate CAN pins and use dedicated transceiver control pins:
+  - CAN_ME2107_EN_PIN (GPIO 16): Transceiver power enable (must be HIGH)
+  - CAN_SPEED_MODE_PIN (GPIO 23): Speed mode control (LOW = high-speed, up to 1Mbps)
 
 ```mermaid
 sequenceDiagram
-participant MCU as "ESP32-S3 MCU"
-participant TRX as "Built-in CAN Transceiver"
+participant MCU as "ESP32 MCU"
+participant TRX as "TJA1050 CAN Transceiver"
 participant BUS as "CAN Bus"
 MCU->>TRX : "Configure TX/RX pins"
+MCU->>TRX : "Enable transceiver (ME2107_EN=HIGH)"
+MCU->>TRX : "Set speed mode (SPEED_MODE=LOW)"
 TRX->>BUS : "Transmit frames"
 BUS-->>TRX : "Receive frames"
 TRX-->>MCU : "Deliver frames"
@@ -117,12 +132,14 @@ TRX-->>MCU : "Deliver frames"
 - [platformio.ini:23-24](file://platformio.ini#L23-L24)
 - [platformio.ini:38-40](file://platformio.ini#L38-L40)
 - [platformio.ini:54-56](file://platformio.ini#L54-L56)
+- [src/ecu_joystick.cpp:190-197](file://src/ecu_joystick.cpp#L190-L197)
 
 **Section sources**
 - [README.md:18](file://README.md#L18)
 - [README.md:48-62](file://README.md#L48-L62)
 - [platformio.ini:17-30](file://platformio.ini#L17-L30)
 - [platformio.ini:31-62](file://platformio.ini#L31-L62)
+- [src/ecu_joystick.cpp:190-197](file://src/ecu_joystick.cpp#L190-L197)
 
 ### PCA9685 PWM Controller for Solenoid Control
 - I2C addresses: PCA9685_I2C_ADDR1 (default 0x40), PCA9685_I2C_ADDR2 (default 0x41).
@@ -312,14 +329,13 @@ JS --> CANLIB
 - LED refresh: Throttled to ~20 FPS to reduce CPU load.
 - I2C bus speed: PCA9685 initialized at 200 Hz PWM; keep I2C polling minimal.
 
-[No sources needed since this section provides general guidance]
-
 ## Troubleshooting Guide
 - CAN initialization failure: Motor driver and joystick ECUs enter a blinking red error pattern until resolved.
 - No joystick data reaching solenoids: Verify joystick address and that Motor Driver ECU is online; check heartbeat messages.
 - PCA9685 not responding: Confirm I2C pins and addresses; the driver auto-detects a second PCA9685 at 0x41.
 - Buttons not registering: Ensure pull-up configuration and active-low wiring; debounce is handled in firmware logic.
 - OTA upload issues: Confirm Wi-Fi AP SSID/password and web UI availability.
+- Transceiver not enabling: Verify CAN_ME2107_EN_PIN is set HIGH and CAN_SPEED_MODE_PIN is set LOW for high-speed operation.
 
 **Section sources**
 - [src/ecu_motor_driver.cpp:305-316](file://src/ecu_motor_driver.cpp#L305-L316)
@@ -327,17 +343,16 @@ JS --> CANLIB
 - [README.md:105-111](file://README.md#L105-L111)
 
 ## Conclusion
-ForwarderKE’s hardware architecture centers on an ESP32-S3-based board with integrated CAN transceiver, a robust J1939-like CAN protocol, and flexible ECU roles. The Motor Driver ECU controls up to 16 solenoids via PCA9685, while Joystick ECUs capture analog inputs and buttons and publish them over CAN. Proper CAN topology, termination, and grounding are essential for reliable operation, especially with high-current solenoid loads.
-
-[No sources needed since this section summarizes without analyzing specific files]
+ForwarderKE's hardware architecture centers on a standard ESP32-based board with integrated TJA1050 CAN transceiver, a robust J1939-like CAN protocol, and flexible ECU roles. The Motor Driver ECU controls up to 16 solenoids via PCA9685, while Joystick ECUs capture analog inputs and buttons and publish them over CAN. The updated pin configuration with dedicated transceiver control pins (CAN_ME2107_EN_PIN and CAN_SPEED_MODE_PIN) provides better control over the CAN transceiver operation. Proper CAN topology, termination, and grounding are essential for reliable operation, especially with high-current solenoid loads.
 
 ## Appendices
 
 ### Pin Assignments and Peripherals
-- CAN TX/RX: GPIO 5/4 (Motor Driver), GPIO 27/26 (Joystick), optional GPIO 23 SE (Joystick).
-- WS2812 LED: GPIO 48 (Motor Driver), GPIO 18 (Joystick).
+- CAN TX/RX: GPIO 5/4 (Motor Driver), GPIO 27/26 (Joystick).
+- Transceiver Control: GPIO 16 (CAN_ME2107_EN), GPIO 23 (CAN_SPEED_MODE).
+- WS2812 LED: GPIO 48 (Motor Driver), GPIO 4 (Joystick).
 - I2C SDA/SCL: GPIO 21/22 for PCA9685.
-- Joystick ADC: GPIO 6/7/15 for pots; buttons on GPIO 16/17 with internal pull-up.
+- Joystick ADC: GPIO 32/33/34 for pots; buttons on GPIO 12/5 with internal pull-up.
 - PCA9685 I2C addresses: 0x40 (primary), 0x41 (detected automatically).
 
 **Section sources**
@@ -345,19 +360,20 @@ ForwarderKE’s hardware architecture centers on an ESP32-S3-based board with in
 - [platformio.ini:23-28](file://platformio.ini#L23-L28)
 - [platformio.ini:38-45](file://platformio.ini#L38-L45)
 - [platformio.ini:54-61](file://platformio.ini#L54-L61)
+- [README.md:111-125](file://README.md#L111-L125)
 
 ### Power Supply and Load Characteristics
 - PCA9685 operates on 5 V; ensure adequate current capacity for 16 MOSFET outputs.
 - Solenoid coil inductance and peak current must be considered; use flyback diodes and appropriate wiring gauge.
 - Ground planes under the motor driver PCB help minimize noise and voltage drops.
 
-[No sources needed since this section provides general guidance]
-
 ### Safety Considerations for High-Current Loads
 - Implement a watchdog that disables solenoids after a timeout if no CAN command is received.
 - Use separate power supplies or heavy-gauge wiring for solenoids to avoid brown-out conditions.
 - Maintain a solid ground connection and avoid long ground loops near sensitive analog signals.
+- Ensure proper transceiver enable timing to prevent bus contention during startup.
 
 **Section sources**
 - [README.md:105-111](file://README.md#L105-L111)
 - [src/ecu_motor_driver.cpp:330-335](file://src/ecu_motor_driver.cpp#L330-L335)
+- [src/ecu_joystick.cpp:190-197](file://src/ecu_joystick.cpp#L190-L197)

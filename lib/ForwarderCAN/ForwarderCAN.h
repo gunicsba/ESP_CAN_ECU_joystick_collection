@@ -119,4 +119,16 @@ private:
     int _txPin = 0;
     int _rxPin = 0;
     uint32_t _bitrate = 250000;
+
+    // Ring buffer for non-network-management messages consumed by loop()
+    static constexpr uint8_t RX_BUF_SIZE = 32;
+    CANMessage _rxBuf[RX_BUF_SIZE];
+    uint8_t _rxBufHead = 0;
+    uint8_t _rxBufTail = 0;
+    uint8_t _rxBufCount = 0;
+
+    bool bufEmpty() const { return _rxBufCount == 0; }
+    bool bufFull() const { return _rxBufCount >= RX_BUF_SIZE; }
+    void bufPush(const CANMessage& msg);
+    bool bufPop(CANMessage& msg);
 };

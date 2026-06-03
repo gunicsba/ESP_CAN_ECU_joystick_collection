@@ -98,53 +98,86 @@ static void initPCA() {
     }
 }
 
-static uint16_t mapAxis(const AxisConfig& axis, uint16_t potValue) {
-    if (!axis.isEnabled()) return 0;
-    uint16_t out = 0;
+// Paired channel output: fwdCh and revCh get PWM values
+// For bidirectional axes: outputChannel = forward, outputChannel+1 = reverse
+// For unidirectional axes: only outputChannel is used
+static void mapAxis(const AxisConfig& axis, uint16_t potValue, uint16_t& fwdCh, uint16_t& revCh) {
+    fwdCh = 0;
+    revCh = 0;
+    if (!axis.isEnabled()) return;
     if (axis.isBidirectional()) {
         if (potValue < axis.deadbandMin) {
+            // Reverse direction -> paired channel
             uint16_t range = axis.deadbandMin;
             if (range == 0) range = 1;
             uint32_t t = ((uint32_t)(axis.deadbandMin - potValue) * 255u) / range;
             if (t > 255) t = 255;
-            uint8_t rev = axis.pwmMax - (uint8_t)(((uint32_t)(axis.pwmMax - axis.pwmMin) * t) / 255u);
-            out = ((uint16_t)rev * 4095u) / 255u;
+            uint8_t pwm = axis.pwmMin + (uint8_t)(((uint32_t)(axis.pwmMax - axis.pwmMin) * t) / 255u);
+            revCh = ((uint16_t)pwm * 4095u) / 255u;
+            fwdCh = 0;
         } else if (potValue > axis.deadbandMax) {
-            uint16_t range = 1023 - axis.deadbandMax;
-            if (range == 0) range = 1;
-            uint32_t t = ((uint32_t)(potValue - axis.deadbandMax) * 255u) / range;
-            if (t > 255) t = 255;
-            uint8_t fwd = axis.pwmMin + (uint8_t)(((uint32_t)(axis.pwmMax - axis.pwmMin) * t) / 255u);
-            out = ((uint16_t)fwd * 4095u) / 255u;
-        } else {
-            out = 0;
-        }
-    } else {
-        if (potValue <= axis.deadbandMax) {
-            out = 0;
-        } else {
+            // Forward direction -> base channel
             uint16_t range = 1023 - axis.deadbandMax;
             if (range == 0) range = 1;
             uint32_t t = ((uint32_t)(potValue - axis.deadbandMax) * 255u) / range;
             if (t > 255) t = 255;
             uint8_t pwm = axis.pwmMin + (uint8_t)(((uint32_t)(axis.pwmMax - axis.pwmMin) * t) / 255u);
-            out = ((uint16_t)pwm * 4095u) / 255u;
+            fwdCh = ((uint16_t)pwm * 4095u) / 255u;
+            revCh = 0;
+        }
+        // In deadband: both stay 0
+    } else {
+        if (potValue > axis.deadbandMax) {
+            uint16_t range = 1023 - axis.deadbandMax;
+            if (range == 0) range = 1;
+            uint32_t t = ((uint32_t)(potValue - axis.deadbandMax) * 255u) / range;
+            if (t > 255) t = 255;
+            uint8_t pwm = axis.pwmMin + (uint8_t)(((uint32_t)(axis.pwmMax - axis.pwmMin) * t) / 255u);
+            fwdCh = ((uint16_t)pwm * 4095u) / 255u;
         }
     }
-    return out;
 }
 
+static uint32_t lastAxisDebug = 0;
+
 static void updateAxes() {
+    bool debugPrint = (millis() - lastAxisDebug >= 1000);
+    if (debugPrint) lastAxisDebug = millis();
     for (int i = 0; i < MAX_AXIS_COUNT; i++) {
         const AxisConfig& axis = g_motorCfg.axes[i];
         if (!axis.isEnabled() || axis.sourceAddress == 0) continue;
         uint16_t pot = g_joyPots[axis.sourceAddress][axis.potIndex];
         uint32_t lastUpdate = g_joyUpdateTime[axis.sourceAddress];
+        if (debugPrint) {
+            Serial.printf("[Axis %d] src=0x%02X pot%d=%d ch=%d bidir=%d upd=%lums\n",
+                i, axis.sourceAddress, axis.potIndex, pot, axis.outputChannel,
+                axis.isBidirectional()?1:0,
+                lastUpdate > 0 ? (millis() - lastUpdate) : 99999UL);
+        }
         if (millis() - lastUpdate < 1000) {
-            uint16_t out = mapAxis(axis, pot);
-            if (out != g_solenoidValues[axis.outputChannel]) {
-                g_solenoidValues[axis.outputChannel] = out;
-                setPWM(axis.outputChannel, out);
+            uint16_t fwd, rev;
+            mapAxis(axis, pot, fwd, rev);
+            uint8_t chFwd = axis.outputChannel;
+            uint8_t chRev = axis.outputChannel + 1;
+            if (fwd != g_solenoidValues[chFwd]) {
+                g_solenoidValues[chFwd] = fwd;
+                setPWM(chFwd, fwd);
+            }
+            if (axis.isBidirectional() && rev != g_solenoidValues[chRev]) {
+                g_solenoidValues[chRev] = rev;
+                setPWM(chRev, rev);
+            }
+        } else {
+            // Joystick timed out, zero both channels
+            uint8_t chFwd = axis.outputChannel;
+            uint8_t chRev = axis.outputChannel + 1;
+            if (g_solenoidValues[chFwd] != 0) {
+                g_solenoidValues[chFwd] = 0;
+                setPWM(chFwd, 0);
+            }
+            if (axis.isBidirectional() && g_solenoidValues[chRev] != 0) {
+                g_solenoidValues[chRev] = 0;
+                setPWM(chRev, 0);
             }
         }
     }
@@ -188,6 +221,7 @@ static void processCAN() {
         uint8_t pf = J1939_GET_PF(msg.id);
         uint8_t sa = J1939_GET_SA(msg.id);
         uint8_t da = J1939_GET_PS(msg.id);
+        Serial.printf("[CAN RX] ID=0x%08lX PF=0x%02X SA=0x%02X len=%d\n", msg.id, pf, sa, msg.len);
         switch (pf) {
             case PF_JOYSTICK_POT1:
             case PF_JOYSTICK_POT2:
@@ -266,6 +300,12 @@ static void processCAN() {
                 break;
             }
             case PF_HEARTBEAT: {
+                // Track module heartbeats for OTA web UI
+#if defined(ENABLE_OTA_WEBSERVER)
+                if (sa < 256) {
+                    ota_trackModule(sa, msg);
+                }
+#endif
                 break;
             }
             default:
@@ -287,6 +327,37 @@ static void sendHeartbeat() {
     g_can->sendBroadcast(PF_HEARTBEAT, data, 8, 6);
 }
 
+// Auto-configure on first boot: set up bidirectional paired channels
+// Joy1 Pot1 -> ch0+1, Joy1 Pot2 -> ch2+3, Joy2 Pot1 -> ch4+5, Joy2 Pot2 -> ch6+7
+static void autoConfigDefaults() {
+    bool anyEnabled = false;
+    for (int i = 0; i < MAX_AXIS_COUNT; i++) {
+        if (g_motorCfg.axes[i].isEnabled()) { anyEnabled = true; break; }
+    }
+    if (anyEnabled) return;  // already configured, don't overwrite
+
+    Serial.println("[MotorDriver] No axis config found, applying defaults...");
+    struct { uint8_t src; uint8_t pot; uint8_t ch; } defaults[] = {
+        { 0x21, 0, 0 },  // Joy1 Pot1 -> ch0(fwd)+ch1(rev)
+        { 0x21, 1, 2 },  // Joy1 Pot2 -> ch2(fwd)+ch3(rev)
+        { 0x22, 0, 4 },  // Joy2 Pot1 -> ch4(fwd)+ch5(rev)
+        { 0x22, 1, 6 },  // Joy2 Pot2 -> ch6(fwd)+ch7(rev)
+    };
+    for (int i = 0; i < 4; i++) {
+        AxisConfig& ax = g_motorCfg.axes[i];
+        ax.sourceAddress = defaults[i].src;
+        ax.potIndex = defaults[i].pot;
+        ax.outputChannel = defaults[i].ch;
+        ax.deadbandMin = 472;   // ~46%
+        ax.deadbandMax = 552;   // ~54%
+        ax.pwmMin = 50;         // ~20%
+        ax.pwmMax = 200;        // ~78%
+        ax.flags = FLAG_AXIS_ENABLED | FLAG_AXIS_BIDIRECTIONAL;
+        cfgMgr.saveAxisConfig(i, ax);
+    }
+    Serial.println("[MotorDriver] Default config saved to NVS");
+}
+
 void ecu_setup() {
     strip.Begin();
     strip.SetPixelColor(0, RgbColor(0, 0, 20));
@@ -298,10 +369,30 @@ void ecu_setup() {
     uint8_t forcedAddr = cfgMgr.getForcedAddress(ECU_PREFERRED_ADDRESS);
     cfgMgr.loadMotorConfig(g_motorCfg);
     cfgMgr.loadCanOutputRules(g_canOutputRules);
+    autoConfigDefaults();
     Serial.println("[MotorDriver] Initializing PCA9685...");
     initPCA();
     allOff();
     Serial.println("[MotorDriver] Initializing CAN...");
+
+    // GPIO loopback test: MCP2562 loops TXD→RXD internally
+    // Toggle GPIO16 (TXD) and read GPIO17 (RXD) to verify physical connection
+    Serial.println("[GPIO Test] Testing MCP2562 TXD->RXD loopback...");
+    pinMode(CAN_TX_PIN, OUTPUT);
+    pinMode(CAN_RX_PIN, INPUT);
+    int pass = 1;
+    for (int i = 0; i < 4; i++) {
+        int level = (i % 2 == 0) ? LOW : HIGH;
+        digitalWrite(CAN_TX_PIN, level);
+        delayMicroseconds(50);
+        int rxRead = digitalRead(CAN_RX_PIN);
+        Serial.printf("[GPIO Test] TX=%d -> RX=%d %s\n", level, rxRead,
+            (rxRead == level) ? "OK" : "FAIL");
+        if (rxRead != level) pass = 0;
+    }
+    digitalWrite(CAN_TX_PIN, HIGH);  // idle state
+    Serial.printf("[GPIO Test] Result: %s\n", pass ? "PASS - MCP2562 data path OK" : "FAIL - MCP2562 RXD not connected to IO17");
+
     g_can = new ForwarderCAN(forcedAddr, ECU_NAME);
     if (!g_can->begin(CAN_TX_PIN, CAN_RX_PIN, CAN_BITRATE)) {
         Serial.println("[MotorDriver] CAN init FAILED!");
@@ -316,19 +407,52 @@ void ecu_setup() {
     }
     Serial.printf("[MotorDriver] Ready. Address=0x%02X Channels=%d\n",
                   g_can->getAddress(), g_pca2Present ? 16 : 8);
+    Serial.printf("[MotorDriver] CAN pins: TX=IO%d RX=IO%d\n", CAN_TX_PIN, CAN_RX_PIN);
     can_output_setup(g_canOutputRules);
 #if defined(ENABLE_OTA_WEBSERVER)
     char hostname[24];
     snprintf(hostname, sizeof(hostname), "forwarder-motor-%02X", g_can->getAddress());
     ota_setup(hostname);
 #endif
+    Serial.println("[MotorDriver] Setup complete, entering loop...");
 }
+
+static uint32_t lastStatusPrint = 0;
+static uint32_t lastSelfTest = 0;
+static uint32_t selfTestCount = 0;
+static uint32_t loopCount = 0;
 
 void ecu_loop() {
     uint32_t now = millis();
+    loopCount++;
+    Serial.print("[D1]");Serial.flush();
     g_can->loop();
+    Serial.print("[D2]");Serial.flush();
     processCAN();
+    Serial.print("[D3]");Serial.flush();
     updateAxes();
+    Serial.print("[D4]");Serial.flush();
+
+    // Self-loopback test: send a test frame every 3s
+    if (now - lastSelfTest >= 3000) {
+        lastSelfTest = now;
+        uint8_t testData[8] = {0xAA, 0xBB, (uint8_t)(selfTestCount & 0xFF), 0,0,0,0,0};
+        selfTestCount++;
+        bool sent = g_can->sendBroadcast(0xEF, testData, 8, 6);  // PGN 0xEF00 test
+        Serial.printf("[SelfTest #%lu] sent=%d (TX_pin=IO%d RX_pin=IO%d)\n",
+            selfTestCount, sent?1:0, CAN_TX_PIN, CAN_RX_PIN);
+        if (!sent) {
+            Serial.printf("[SelfTest] TX FAILED - check CAN bus\n");
+        }
+        yield();
+    }
+
+    // Periodic CAN bus status
+    if (now - lastStatusPrint >= 5000) {
+        lastStatusPrint = now;
+        Serial.printf("[CAN Status] online=%d tx=%lu rx=%lu err=%lu\n",
+            g_can->isOnline()?1:0, g_can->getTxCount(), g_can->getRxCount(), g_can->getErrorCount());
+    }
     if (now - lastSolenoidUpdate > SAFETY_TIMEOUT_MS) {
         if (lastSolenoidUpdate != 0) {
             allOff();

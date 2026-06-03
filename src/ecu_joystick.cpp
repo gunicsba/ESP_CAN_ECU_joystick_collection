@@ -135,15 +135,12 @@ static void processCAN() {
     while (g_can->receive(msg, 0)) {
         uint8_t pf = J1939_GET_PF(msg.id);
         uint8_t ps = J1939_GET_PS(msg.id);
-        Serial.printf("[CAN RX] ID=0x%08lX PF=0x%02X PS=0x%02X len=%d data=%02X %02X %02X\n",
-            msg.id, pf, ps, msg.len, msg.data[0], msg.data[1], msg.data[2]);
         if (pf == PF_LED_COLOR) {
             if (ps == DA_BROADCAST || ps == g_can->getAddress()) {
                 if (msg.len >= 3) {
                     ledR = msg.data[0];
                     ledG = msg.data[1];
                     ledB = msg.data[2];
-                    Serial.printf("[LED] Set color R=%d G=%d B=%d\n", ledR, ledG, ledB);
                 }
             }
         } else if (pf == PF_IDENTIFY) {

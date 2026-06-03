@@ -10,7 +10,15 @@
 - [ecu_motor_driver.cpp](file://src/ecu_motor_driver.cpp)
 - [can_output.cpp](file://src/can_output.cpp)
 - [can_output.h](file://src/can_output.h)
+- [platformio.ini](file://platformio.ini)
 </cite>
+
+## Update Summary
+**Changes Made**
+- Enhanced CAN communication with comprehensive alert configuration
+- Added automatic controller restart capabilities
+- Improved diagnostic output and monitoring
+- Updated error handling procedures with comprehensive alert flags
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -18,22 +26,24 @@
 3. [Core Components](#core-components)
 4. [Architecture Overview](#architecture-overview)
 5. [Detailed Component Analysis](#detailed-component-analysis)
-6. [Dependency Analysis](#dependency-analysis)
-7. [Performance Considerations](#performance-considerations)
-8. [Troubleshooting Guide](#troubleshooting-guide)
-9. [Conclusion](#conclusion)
-10. [Appendices](#appendices)
+6. [Enhanced CAN Communication](#enhanced-can-communication)
+7. [Dependency Analysis](#dependency-analysis)
+8. [Performance Considerations](#performance-considerations)
+9. [Troubleshooting Guide](#troubleshooting-guide)
+10. [Conclusion](#conclusion)
+11. [Appendices](#appendices)
 
 ## Introduction
-This document describes the CAN protocol implementation used by ForwarderKE, focusing on the J1939-like addressing scheme and custom message types. It explains the 29-bit extended identifier format, address claiming and arbitration during startup, and the complete set of custom CAN messages used for joystick telemetry, button reporting, LED control, solenoid commands, configuration, and heartbeats. It also documents payload formats, data encoding, timing requirements, broadcast versus directed messaging, error handling, and practical examples derived from the codebase.
+This document describes the CAN protocol implementation used by ForwarderKE, focusing on the J1939-like addressing scheme and custom message types. It explains the 29-bit extended identifier format, address claiming and arbitration during startup, and the complete set of custom CAN messages used for joystick telemetry, button reporting, LED control, solenoid commands, configuration, and heartbeats. The implementation now includes comprehensive alert configuration for enhanced CAN communication monitoring, automatic controller restart capabilities, and improved diagnostic output for robust operation in agricultural automation environments.
 
 ## Project Structure
 The system consists of:
-- A central CAN abstraction layer implementing J1939-like addressing and address claiming
+- A central CAN abstraction layer implementing J1939-like addressing and address claiming with comprehensive alert monitoring
 - Two ECU implementations:
   - Joystick ECU: reads analog inputs and buttons, reports telemetry, controls LEDs, and responds to configuration requests
   - Motor Driver ECU: receives joystick inputs, maps to solenoids via PWM, handles LED control, and supports configuration and diagnostics
 - Optional CAN-triggered GPIO output rules for external devices
+- Enhanced diagnostic monitoring with automatic recovery mechanisms
 
 ```mermaid
 graph TB
@@ -51,10 +61,12 @@ CAN["ESP32 TWAI Transceiver"]
 PCA["PCA9685 PWM Controllers"]
 LED["Neopixel LED"]
 end
+FC --> CAN
+FC --> |"Enhanced Alert Monitoring"| CAN
+FC --> |"Automatic Recovery"| CAN
 JS --> FC
 MD --> FC
 CO --> FC
-FC --> CAN
 MD --> PCA
 JS --> LED
 MD --> LED
@@ -79,12 +91,13 @@ CFG -.-> MD
 - [ForwarderConfig.h:64-92](file://lib/ForwarderConfig/ForwarderConfig.h#L64-L92)
 
 ## Core Components
-- ForwarderCAN: Implements J1939-like 29-bit ID layout, address claiming, arbitration, and message send/receive APIs
+- ForwarderCAN: Implements J1939-like 29-bit ID layout, address claiming, arbitration, and message send/receive APIs with comprehensive alert monitoring
 - ECU implementations:
   - Joystick ECU: sends joystick position, button states, and periodic heartbeat; controls LED color and identification
   - Motor Driver ECU: receives joystick data, maps to solenoids, applies deadbands and directionality, and responds to configuration requests
 - CAN Output Rules: optional GPIO actions triggered by incoming CAN frames
 - Persistent configuration: stores forced addresses, axis mapping, and CAN output rules
+- Enhanced Diagnostics: comprehensive monitoring of CAN bus health and automatic recovery mechanisms
 
 **Section sources**
 - [ForwarderCAN.h:66-120](file://lib/ForwarderCAN/ForwarderCAN.h#L66-L120)
@@ -120,6 +133,9 @@ class ForwarderCAN {
 -sendAddressClaimed() void
 -processNetworkManagement(msg) void
 -tryClaimAddress() void
++ConfigureAlerts() void
++MonitorBusState() void
++AutoRestartController() void
 }
 class CANMessage {
 +uint32_t id
@@ -316,6 +332,61 @@ Optional GPIO actions triggered by incoming CAN frames:
 - [ecu_motor_driver.cpp:206-218](file://src/ecu_motor_driver.cpp#L206-L218)
 - [ecu_motor_driver.cpp:257-267](file://src/ecu_motor_driver.cpp#L257-L267)
 
+## Enhanced CAN Communication
+
+### Comprehensive Alert Configuration
+The ForwarderCAN library now implements comprehensive alert monitoring for enhanced CAN bus reliability and diagnostics. The system configures the following alert flags:
+
+- **TWAI_ALERT_TX_IDLE**: Monitors when the transmitter becomes idle
+- **TWAI_ALERT_TX_SUCCESS**: Tracks successful message transmissions
+- **TWAI_ALERT_TX_FAILED**: Monitors transmission failures
+- **TWAI_ALERT_ERR_PASS**: Detects passive error conditions
+- **TWAI_ALERT_BUS_ERROR**: Monitors bus error conditions
+- **TWAI_ALERT_RX_DATA**: Tracks incoming message reception
+- **TWAI_ALERT_RX_QUEUE_FULL**: Monitors receive queue overflow conditions
+
+These alerts are configured during the CAN initialization process and continuously monitored during operation to provide comprehensive bus health monitoring.
+
+**Section sources**
+- [ForwarderCAN.cpp:46-51](file://lib/ForwarderCAN/ForwarderCAN.cpp#L46-L51)
+
+### Automatic Controller Restart Mechanism
+The system implements automatic recovery mechanisms to handle CAN bus errors and controller failures:
+
+- **Bus State Monitoring**: Continuously checks TWAI controller state
+- **Automatic Restart**: Restarts stopped controllers automatically
+- **Bus Off Recovery**: Initiates recovery procedures for bus-off conditions
+- **Error Count Tracking**: Maintains statistics on bus errors and recovery attempts
+
+The automatic restart mechanism ensures continuous operation even when temporary bus issues occur, improving system reliability in agricultural environments.
+
+**Section sources**
+- [ForwarderCAN.cpp:87-99](file://lib/ForwarderCAN/ForwarderCAN.cpp#L87-L99)
+
+### Enhanced Diagnostic Output
+The implementation provides comprehensive diagnostic information through enhanced serial output:
+
+- **TWAI Status Information**: Hardware state, message queues, and error counters
+- **Bus Health Metrics**: Transmission success/failure rates, error counts
+- **Operational Statistics**: TX/RX counts, error statistics, address claiming status
+- **Real-time Monitoring**: Continuous bus state monitoring and alert reporting
+
+This enhanced diagnostic output enables detailed troubleshooting and performance monitoring of the CAN bus system.
+
+**Section sources**
+- [ecu_joystick.cpp:247-260](file://src/ecu_joystick.cpp#L247-L260)
+- [ecu_motor_driver.cpp:341-347](file://src/ecu_motor_driver.cpp#L341-L347)
+
+### Practical Examples: Enhanced Alert Handling
+- **Configuring Alerts**: The system automatically configures all seven alert types during initialization
+- **Monitoring Bus State**: Continuous monitoring of TWAI controller state with automatic recovery
+- **Diagnostic Reporting**: Comprehensive serial output showing bus health and operational metrics
+- **Error Recovery**: Automatic restart of stopped controllers and bus-off recovery procedures
+
+**Section sources**
+- [ForwarderCAN.cpp:101-103](file://lib/ForwarderCAN/ForwarderCAN.cpp#L101-L103)
+- [ForwarderCAN.cpp:87-99](file://lib/ForwarderCAN/ForwarderCAN.cpp#L87-L99)
+
 ## Dependency Analysis
 ```mermaid
 graph LR
@@ -326,6 +397,8 @@ MD --> CO
 JS --> CFG["ForwarderConfig.h"]
 MD --> CFG
 FC --> ESP["ESP32 TWAI"]
+FC --> |"Enhanced Alert System"| ESP
+FC --> |"Automatic Recovery"| ESP
 MD --> PCA["PCA9685"]
 JS --> LED["Neopixel"]
 MD --> LED
@@ -351,21 +424,28 @@ MD --> LED
   - Heartbeat: 1 Hz when online
 - Safety:
   - Automatic solenoid deactivation after 500 ms absence of updates
+  - Enhanced bus error detection and automatic recovery
 - Bus utilization:
   - Minimal overhead with small payloads and targeted broadcasts
-
-[No sources needed since this section provides general guidance]
+  - Comprehensive alert monitoring with minimal performance impact
 
 ## Troubleshooting Guide
 - CAN initialization failure:
   - Joystick and motor driver ECUs flash LED and loop on failure
+  - Enhanced diagnostic output provides detailed error information
 - Address conflict:
   - If claiming fails, device falls back to special source address and retries
+- Enhanced Error Recovery:
+  - Automatic controller restart for stopped TWAI controllers
+  - Bus-off recovery procedures initiated automatically
 - LED indicators:
   - Joystick: amber when offline; white flash for identify
   - Motor driver: red when offline; yellow flash for fast blink after activity
 - Persistent configuration:
   - Forced address stored in NVS; clearing removes override
+- Comprehensive Diagnostics:
+  - Serial output provides detailed bus health and error information
+  - Alert monitoring helps identify specific failure points
 
 **Section sources**
 - [ecu_joystick.cpp:175-185](file://src/ecu_joystick.cpp#L175-L185)
@@ -373,11 +453,10 @@ MD --> LED
 - [ecu_joystick.cpp:88-96](file://src/ecu_joystick.cpp#L88-L96)
 - [ecu_motor_driver.cpp:167-182](file://src/ecu_motor_driver.cpp#L167-L182)
 - [ecu_motor_driver.cpp:329-335](file://src/ecu_motor_driver.cpp#L329-L335)
+- [ForwarderCAN.cpp:87-99](file://lib/ForwarderCAN/ForwarderCAN.cpp#L87-L99)
 
 ## Conclusion
-ForwarderKE implements a robust J1939-like CAN protocol tailored for agricultural automation. The design leverages a simple address claiming mechanism, clear PF-based message semantics, and practical timing to ensure reliable operation. The protocol supports telemetry, actuation, diagnostics, and remote configuration, with built-in safety and diagnostics.
-
-[No sources needed since this section summarizes without analyzing specific files]
+ForwarderKE implements a robust J1939-like CAN protocol tailored for agricultural automation with enhanced reliability through comprehensive alert monitoring, automatic recovery mechanisms, and detailed diagnostic capabilities. The design leverages a simple address claiming mechanism, clear PF-based message semantics, and practical timing to ensure reliable operation. The protocol supports telemetry, actuation, diagnostics, and remote configuration, with built-in safety and comprehensive monitoring systems that automatically detect and recover from bus errors.
 
 ## Appendices
 
@@ -400,6 +479,26 @@ Note over A,Bus : "Only one device claims address"
 - [ForwarderCAN.h:35-36](file://lib/ForwarderCAN/ForwarderCAN.h#L35-L36)
 - [ForwarderCAN.h:74-79](file://lib/ForwarderCAN/ForwarderCAN.h#L74-L79)
 - [ForwarderCAN.h:110-112](file://lib/ForwarderCAN/ForwarderCAN.h#L110-L112)
+
+### Enhanced Alert Monitoring Flow
+```mermaid
+flowchart TD
+Start(["CAN Initialization"]) --> Alerts["Configure Alerts"]
+Alerts --> Monitor["Monitor Bus State"]
+Monitor --> Check["Check TWAI Status"]
+Check --> Running{"Controller Running?"}
+Running --> |Yes| AlertsRead["Read Alert Flags"]
+Running --> |No| Restart["Restart Controller"]
+AlertsRead --> Process["Process Alert Events"]
+Process --> UpdateStats["Update Error Statistics"]
+UpdateStats --> Monitor
+Restart --> Monitor
+```
+
+**Diagram sources**
+- [ForwarderCAN.cpp:46-51](file://lib/ForwarderCAN/ForwarderCAN.cpp#L46-L51)
+- [ForwarderCAN.cpp:87-99](file://lib/ForwarderCAN/ForwarderCAN.cpp#L87-L99)
+- [ForwarderCAN.cpp:101-103](file://lib/ForwarderCAN/ForwarderCAN.cpp#L101-L103)
 
 ### Joystick to Solenoid Mapping Flow
 ```mermaid

@@ -1,5 +1,21 @@
 #include "ForwarderCAN.h"
 
+// Ring buffer helpers
+void ForwarderCAN::bufPush(const CANMessage& msg) {
+    if (bufFull()) return;  // drop oldest if full
+    _rxBuf[_rxBufHead] = msg;
+    _rxBufHead = (_rxBufHead + 1) % RX_BUF_SIZE;
+    _rxBufCount++;
+}
+
+bool ForwarderCAN::bufPop(CANMessage& msg) {
+    if (bufEmpty()) return false;
+    msg = _rxBuf[_rxBufTail];
+    _rxBufTail = (_rxBufTail + 1) % RX_BUF_SIZE;
+    _rxBufCount--;
+    return true;
+}
+
 ForwarderCAN::ForwarderCAN(uint8_t preferredAddress, const uint8_t name[8])
     : _preferredAddress(preferredAddress),
       _currentAddress(SA_CANNOT_CLAIM),
@@ -16,7 +32,7 @@ bool ForwarderCAN::begin(int txPin, int rxPin, uint32_t bitrate) {
     _bitrate = bitrate;
 
     twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(
-        (gpio_num_t)txPin, (gpio_num_t)rxPin, TWAI_MODE_NORMAL);
+        (gpio_num_t)txPin, (gpio_num_t)rxPin, TWAI_MODE_NO_ACK);
     g_config.tx_queue_len = 16;
     g_config.rx_queue_len = 32;
 
@@ -42,6 +58,14 @@ bool ForwarderCAN::begin(int txPin, int rxPin, uint32_t bitrate) {
     }
 
     _twaiStarted = true;
+
+    // Print detailed TWAI status
+    twai_status_info_t initStatus;
+    if (twai_get_status_info(&initStatus) == ESP_OK) {
+        Serial.printf("[CAN] Started: state=%d tx_err=%lu rx_err=%lu msgs_rx=%lu\n",
+            initStatus.state, initStatus.tx_error_counter,
+            initStatus.rx_error_counter, initStatus.msgs_to_rx);
+    }
 
     // Configure alerts (per manufacturer recommendation)
     uint32_t alerts = TWAI_ALERT_TX_IDLE | TWAI_ALERT_TX_SUCCESS |
@@ -83,11 +107,20 @@ void ForwarderCAN::sendAddressClaimed() {
 void ForwarderCAN::loop() {
     if (!_twaiStarted) return;
 
+    Serial.print("[F1]");Serial.flush();
     // Check bus state and recover
     twai_status_info_t status;
     if (twai_get_status_info(&status) == ESP_OK) {
+        static uint32_t lastStatPrint = 0;
+        if (millis() - lastStatPrint >= 2000) {
+            lastStatPrint = millis();
+            Serial.printf("[CAN] state=%d tx_err=%lu rx_err=%lu rxq=%lu txq=%lu\n",
+                status.state, status.tx_error_counter, status.rx_error_counter,
+                status.msgs_to_rx, status.msgs_to_tx);
+        }
         if (status.state == TWAI_STATE_STOPPED) {
-            Serial.println("[CAN] TWAI stopped, restarting...");
+            Serial.printf("[CAN] TWAI stopped (tx_err=%lu rx_err=%lu), restarting...\n",
+                status.tx_error_counter, status.rx_error_counter);
             twai_start();
             delay(10);
             return;
@@ -98,10 +131,12 @@ void ForwarderCAN::loop() {
         }
     }
 
+    Serial.print("[F2]");Serial.flush();
     // Read alerts to clear them
     uint32_t alerts;
     twai_read_alerts(&alerts, 0);
 
+    Serial.print("[F3]");Serial.flush();
     // Address claiming state machine
     if (_state == ACS_CLAIMING) {
         if (millis() - _claimTimer >= CLAIM_TIMEOUT_MS) {
@@ -122,14 +157,25 @@ void ForwarderCAN::loop() {
         }
     }
 
-    // Process incoming network management messages
+    Serial.print("[F4]");Serial.flush();
+    // Process incoming network management messages, buffer the rest
     CANMessage rx;
+    int rxCount = 0;
     while (receive(rx, 0)) {
+        rxCount++;
+        if (rxCount > 50) {
+            Serial.print("[FWD_CAN_RX_LIMIT]");Serial.flush();
+            break;
+        }
+        Serial.print("[FWD_CAN_RX]");Serial.flush();
         uint8_t pf = J1939_GET_PF(rx.id);
         if (pf == J1939_PF_ADDRESS_CLAIMED || pf == J1939_PF_REQUEST_AC) {
             processNetworkManagement(rx);
+        } else {
+            bufPush(rx);  // preserve for application layer
         }
     }
+    Serial.print("[F5]");Serial.flush();
 }
 
 void ForwarderCAN::processNetworkManagement(const CANMessage& msg) {
@@ -193,6 +239,11 @@ bool ForwarderCAN::sendBroadcast(uint8_t pf, const uint8_t* data, uint8_t len, u
 bool ForwarderCAN::receive(CANMessage& msg, uint32_t timeoutMs) {
     if (!_twaiStarted) return false;
 
+    // Return buffered messages first (preserved by loop())
+    if (bufPop(msg)) {
+        return true;
+    }
+
     twai_message_t rxMsg;
     esp_err_t ret = twai_receive(&rxMsg, timeoutMs == 0 ? 0 : pdMS_TO_TICKS(timeoutMs));
     if (ret == ESP_OK) {
@@ -202,9 +253,6 @@ bool ForwarderCAN::receive(CANMessage& msg, uint32_t timeoutMs) {
         if (msg.len > 8) msg.len = 8;
         memcpy(msg.data, rxMsg.data, msg.len);
         _rxCount++;
-        // Debug: print all received messages
-        Serial.printf("[CAN RX] ID=0x%08lX ext=%d len=%d self=%d\n", 
-            msg.id, msg.ext, msg.len, rxMsg.self);
         return true;
     }
     return false;
@@ -212,6 +260,7 @@ bool ForwarderCAN::receive(CANMessage& msg, uint32_t timeoutMs) {
 
 bool ForwarderCAN::hasMessage() const {
     if (!_twaiStarted) return false;
+    if (!bufEmpty()) return true;
     twai_status_info_t status;
     if (twai_get_status_info(&status) == ESP_OK) {
         return status.msgs_to_rx > 0;

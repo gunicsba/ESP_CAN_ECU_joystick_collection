@@ -14,6 +14,13 @@
 - [web_state.cpp](file://src/web_state.cpp)
 </cite>
 
+## Update Summary
+**Changes Made**
+- Updated OTA build environment references from `motor_driver_ota` to `joystick1_ota`
+- Updated WiFi access point naming conventions to reflect standardized joystick ID and address format
+- Revised deployment workflows to align with the new OTA environment structure
+- Updated troubleshooting procedures to match the current implementation
+
 ## Table of Contents
 1. [Introduction](#introduction)
 2. [Project Structure](#project-structure)
@@ -33,6 +40,8 @@
 ## Introduction
 This document explains the Over-The-Air (OTA) firmware update system for ForwarderKE, focusing on the wireless firmware upgrade mechanism, web-based firmware upload interface, and automatic firmware installation process. It covers how the device creates a Wi-Fi access point during OTA mode, how the web interface enables firmware uploads, and how the update is applied and verified. It also documents security considerations, update validation, rollback mechanisms, and operational procedures for field deployments.
 
+**Updated** The OTA system now uses standardized naming conventions and focuses primarily on joystick-based ECUs for wireless updates.
+
 ## Project Structure
 The OTA functionality is implemented as part of the embedded application and controlled via build environments. The repository organizes the code by feature and hardware role, with separate environments for standard and OTA builds.
 
@@ -46,7 +55,7 @@ D --> E["ForwarderCAN.h<br/>CAN protocol and messaging"]
 D --> F["web_state.h/.cpp<br/>Shared UI state"]
 G["platformio.ini<br/>Build environments"] --> B
 G --> C
-G --> H["motor_driver_ota<br/>joystick1_ota / joystick2_ota"]
+G --> H["joystick1_ota / joystick2_ota<br/>Standardized OTA environments"]
 I["README.md<br/>Usage and OTA instructions"] --> H
 ```
 
@@ -54,16 +63,16 @@ I["README.md<br/>Usage and OTA instructions"] --> H
 - [main.cpp:19-31](file://src/main.cpp#L19-L31)
 - [ecu_motor_driver.cpp:1-355](file://src/ecu_motor_driver.cpp#L1-L355)
 - [ecu_joystick.cpp:1-239](file://src/ecu_joystick.cpp#L1-L239)
-- [ota_webserver.cpp:1-809](file://src/ota_webserver.cpp#L1-L809)
+- [ota_webserver.cpp:1-917](file://src/ota_webserver.cpp#L1-L917)
 - [ForwarderCAN.h:1-120](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L120)
 - [web_state.h:1-23](file://src/web_state.h#L1-L23)
 - [web_state.cpp:1-20](file://src/web_state.cpp#L1-L20)
-- [platformio.ini:1-80](file://platformio.ini#L1-L80)
+- [platformio.ini:1-114](file://platformio.ini#L1-L114)
 - [README.md:84-103](file://README.md#L84-L103)
 
 **Section sources**
 - [README.md:112-126](file://README.md#L112-L126)
-- [platformio.ini:1-80](file://platformio.ini#L1-L80)
+- [platformio.ini:1-114](file://platformio.ini#L1-L114)
 - [main.cpp:19-31](file://src/main.cpp#L19-L31)
 
 ## Core Components
@@ -73,21 +82,23 @@ I["README.md<br/>Usage and OTA instructions"] --> H
 - Web State: Exposes runtime state to the web UI for dashboard, module discovery, and configuration.
 
 Key responsibilities:
-- Create Wi-Fi AP and mDNS service during OTA mode.
+- Create Wi-Fi AP and mDNS service during OTA mode using standardized naming conventions.
 - Serve HTML and JSON APIs for dashboard and configuration.
 - Accept firmware uploads and apply updates via the ESP-IDF Update framework.
 - Reboot after successful update application.
 
+**Updated** The OTA naming convention now follows the pattern `forwarder-joyX-YY` where X is the joystick ID and YY is the device address in hexadecimal.
+
 **Section sources**
 - [ota_webserver.h:3-6](file://src/ota_webserver.h#L3-L6)
-- [ota_webserver.cpp:705-733](file://src/ota_webserver.cpp#L705-L733)
+- [ota_webserver.cpp:873-917](file://src/ota_webserver.cpp#L873-L917)
 - [ForwarderCAN.h:38-51](file://lib/ForwarderCAN/ForwarderCAN.h#L38-L51)
 - [ecu_motor_driver.cpp:1-355](file://src/ecu_motor_driver.cpp#L1-L355)
 - [ecu_joystick.cpp:1-239](file://src/ecu_joystick.cpp#L1-L239)
 - [web_state.h:1-23](file://src/web_state.h#L1-L23)
 
 ## Architecture Overview
-The OTA architecture centers on the OTA web server that runs when enabled by build flags. It initializes Wi-Fi AP mode, starts an HTTP server, registers routes for UI and API, and exposes an upload handler that delegates to the ESP-IDF Update engine.
+The OTA architecture centers on the OTA web server that runs when enabled by build flags. It initializes Wi-Fi AP mode with standardized naming, starts an HTTP server, registers routes for UI and API, and exposes an upload handler that delegates to the ESP-IDF Update engine.
 
 ```mermaid
 graph TB
@@ -98,7 +109,7 @@ OTA["OTA Web Server"]
 FS["Filesystem / SPIFFS"]
 end
 subgraph "Access Point"
-AP["Soft AP<br/>SSID: forwarder-<type>-<addr>"]
+AP["Soft AP<br/>SSID: forwarder-joyX-YY"]
 DNS["mDNS: http._tcp"]
 end
 subgraph "Client"
@@ -112,16 +123,18 @@ OTA --> CAN
 CAN --> MCU
 ```
 
+**Updated** The access point naming now follows the standardized format `forwarder-joyX-YY` where X represents the joystick ID (1 or 2) and YY is the device's CAN address in hexadecimal format.
+
 **Diagram sources**
-- [ota_webserver.cpp:766-791](file://src/ota_webserver.cpp#L766-L791)
-- [ecu_motor_driver.cpp:187-191](file://src/ecu_motor_driver.cpp#L187-L191)
-- [ecu_joystick.cpp:187-191](file://src/ecu_joystick.cpp#L187-L191)
+- [ota_webserver.cpp:873-917](file://src/ota_webserver.cpp#L873-L917)
+- [ecu_motor_driver.cpp:320-324](file://src/ecu_motor_driver.cpp#L320-L324)
+- [ecu_joystick.cpp:216-221](file://src/ecu_joystick.cpp#L216-L221)
 - [ForwarderCAN.h:66-120](file://lib/ForwarderCAN/ForwarderCAN.h#L66-L120)
 
 ## Detailed Component Analysis
 
 ### OTA Web Server
-The OTA web server sets up Wi-Fi AP mode, registers endpoints, and handles firmware updates.
+The OTA web server sets up Wi-Fi AP mode with standardized naming, registers endpoints, and handles firmware updates.
 
 ```mermaid
 classDiagram
@@ -148,7 +161,7 @@ class OTA_WebServer {
 **Diagram sources**
 - [ota_webserver.h:3-6](file://src/ota_webserver.h#L3-L6)
 - [ota_webserver.cpp:13-25](file://src/ota_webserver.cpp#L13-L25)
-- [ota_webserver.cpp:506-733](file://src/ota_webserver.cpp#L506-L733)
+- [ota_webserver.cpp:812-844](file://src/ota_webserver.cpp#L812-L844)
 
 Key behaviors:
 - Creates Soft AP with SSID derived from hostname and a fixed password.
@@ -157,11 +170,11 @@ Key behaviors:
 - Firmware upload handler delegates to ESP-IDF Update and reboots on success.
 
 **Section sources**
-- [ota_webserver.cpp:766-791](file://src/ota_webserver.cpp#L766-L791)
-- [ota_webserver.cpp:705-733](file://src/ota_webserver.cpp#L705-L733)
+- [ota_webserver.cpp:873-917](file://src/ota_webserver.cpp#L873-L917)
+- [ota_webserver.cpp:812-844](file://src/ota_webserver.cpp#L812-L844)
 
 ### ECU Implementations and OTA Activation
-Both ECU implementations conditionally enable OTA when built with OTA environments.
+Both ECU implementations conditionally enable OTA when built with OTA environments, using standardized naming conventions.
 
 ```mermaid
 sequenceDiagram
@@ -171,19 +184,21 @@ participant OTA as "ota_webserver.cpp"
 Main->>ECU : ecu_setup()
 ECU->>ECU : Initialize peripherals and CAN
 ECU->>OTA : ota_setup(hostname)
-OTA->>OTA : Start Soft AP and HTTP server
+OTA->>OTA : Start Soft AP with standardized naming
 OTA-->>ECU : Ready for OTA
 ```
 
+**Updated** The OTA activation now uses standardized hostname formatting: `forwarder-joyX-YY` for joystick ECUs and `forwarder-motor-YY` for motor driver ECUs.
+
 **Diagram sources**
 - [main.cpp:19-31](file://src/main.cpp#L19-L31)
-- [ecu_motor_driver.cpp:187-191](file://src/ecu_motor_driver.cpp#L187-L191)
-- [ecu_joystick.cpp:187-191](file://src/ecu_joystick.cpp#L187-L191)
-- [ota_webserver.cpp:766-791](file://src/ota_webserver.cpp#L766-L791)
+- [ecu_motor_driver.cpp:320-324](file://src/ecu_motor_driver.cpp#L320-L324)
+- [ecu_joystick.cpp:216-221](file://src/ecu_joystick.cpp#L216-L221)
+- [ota_webserver.cpp:873-917](file://src/ota_webserver.cpp#L873-L917)
 
 **Section sources**
-- [ecu_motor_driver.cpp:187-191](file://src/ecu_motor_driver.cpp#L187-L191)
-- [ecu_joystick.cpp:187-191](file://src/ecu_joystick.cpp#L187-L191)
+- [ecu_motor_driver.cpp:320-324](file://src/ecu_motor_driver.cpp#L320-L324)
+- [ecu_joystick.cpp:216-221](file://src/ecu_joystick.cpp#L216-L221)
 
 ### CAN Heartbeat Scanning and Module Discovery
 The OTA web server scans CAN heartbeats to discover connected modules and infer their types.
@@ -200,11 +215,11 @@ Loop --> |No| End(["Done"])
 ```
 
 **Diagram sources**
-- [ota_webserver.cpp:742-761](file://src/ota_webserver.cpp#L742-L761)
+- [ota_webserver.cpp:849-868](file://src/ota_webserver.cpp#L849-L868)
 - [ForwarderCAN.h:38-51](file://lib/ForwarderCAN/ForwarderCAN.h#L38-L51)
 
 **Section sources**
-- [ota_webserver.cpp:742-761](file://src/ota_webserver.cpp#L742-L761)
+- [ota_webserver.cpp:849-868](file://src/ota_webserver.cpp#L849-L868)
 
 ### Web State and Dashboard Exposure
 The web state exposes runtime data consumed by the UI, including joystick values, solenoid outputs, and module discovery.
@@ -243,28 +258,30 @@ OTA --> WiFi["ESP32 WiFi / WebServer"]
 OTA --> Update["ESP-IDF Update"]
 OTA --> CAN["ForwarderCAN.h"]
 OTA --> State["web_state.h/.cpp"]
-Env["platformio.ini<br/>*_ota environments"] --> Flags
+Env["platformio.ini<br/>joystick1_ota / joystick2_ota environments"] --> Flags
 ```
 
+**Updated** The OTA environments have been standardized to `joystick1_ota` and `joystick2_ota`, replacing the previous `motor_driver_ota` environment.
+
 **Diagram sources**
-- [platformio.ini:63-80](file://platformio.ini#L63-L80)
+- [platformio.ini:103-113](file://platformio.ini#L103-L113)
 - [ota_webserver.cpp:3-11](file://src/ota_webserver.cpp#L3-L11)
 - [ForwarderCAN.h:1-120](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L120)
 - [web_state.h:1-23](file://src/web_state.h#L1-L23)
 
 **Section sources**
-- [platformio.ini:63-80](file://platformio.ini#L63-L80)
+- [platformio.ini:103-113](file://platformio.ini#L103-L113)
 - [ota_webserver.cpp:3-11](file://src/ota_webserver.cpp#L3-L11)
 
 ## Performance Considerations
-- Upload throughput depends on client network conditions and the ESP32’s processing capacity. Large firmware.bin files increase risk of timeouts.
+- Upload throughput depends on client network conditions and the ESP32's processing capacity. Large firmware.bin files increase risk of timeouts.
 - The web server runs on the main thread; heavy processing in other tasks can delay HTTP response handling.
 - Frequent heartbeat scanning is lightweight but still consumes CPU cycles; keep polling intervals reasonable.
 
 ## Security Considerations
 - Access point credentials:
   - The access point password is set to a fixed value during OTA mode initialization.
-  - Clients connect to the AP using the device’s hostname-derived SSID and the fixed password.
+  - Clients connect to the AP using the device's hostname-derived SSID and the fixed password.
 - Update validation:
   - The firmware upload handler delegates to the ESP-IDF Update engine, which performs basic integrity checks during flashing.
   - There is no cryptographic signature verification or pre-checksum validation in the upload handler.
@@ -276,23 +293,25 @@ Env["platformio.ini<br/>*_ota environments"] --> Flags
   - Implement a watchdog to recover from failed updates and restore a known-good image.
 
 **Section sources**
-- [ota_webserver.cpp:766-791](file://src/ota_webserver.cpp#L766-L791)
-- [ota_webserver.cpp:705-733](file://src/ota_webserver.cpp#L705-L733)
+- [ota_webserver.cpp:873-917](file://src/ota_webserver.cpp#L873-L917)
+- [ota_webserver.cpp:812-844](file://src/ota_webserver.cpp#L812-L844)
 
 ## Firmware Generation and Update Preparation
 - Generating firmware.bin:
   - Build the standard environment for the target ECU type to produce a .bin file.
   - The .bin is placed in the build output directory for OTA use.
 - Update file preparation:
-  - Ensure the .bin matches the device’s MCU and memory layout.
+  - Ensure the .bin matches the device's MCU and memory layout.
   - Keep the .bin filename consistent and avoid renaming to prevent confusion.
 - OTA build environments:
-  - Use *_ota environments to enable the web server and OTA capabilities.
-  - The *_ota environments inherit base flags and add ENABLE_OTA_WEBSERVER.
+  - Use joystick1_ota or joystick2_ota environments to enable the web server and OTA capabilities.
+  - The OTA environments inherit base flags and add ENABLE_OTA_WEBSERVER.
+
+**Updated** The OTA build environments have been standardized to `joystick1_ota` and `joystick2_ota`, replacing the previous `motor_driver_ota` environment.
 
 **Section sources**
-- [README.md:99-103](file://README.md#L99-L103)
-- [platformio.ini:63-80](file://platformio.ini#L63-L80)
+- [README.md:162-166](file://README.md#L162-L166)
+- [platformio.ini:103-113](file://platformio.ini#L103-L113)
 
 ## Deployment Workflows
 - Standard vs OTA environments:
@@ -305,10 +324,12 @@ Env["platformio.ini<br/>*_ota environments"] --> Flags
   - Prefer off-hours or maintenance windows to minimize downtime.
   - Ensure the device remains powered during the update to avoid partial flashes.
 
+**Updated** The OTA environment selection has been standardized to use `joystick1_ota` and `joystick2_ota` for wireless updates, with the motor driver environment using `motor_driver_ota` for traditional updates.
+
 **Section sources**
 - [platformio.ini:17-30](file://platformio.ini#L17-L30)
 - [platformio.ini:31-62](file://platformio.ini#L31-L62)
-- [platformio.ini:63-80](file://platformio.ini#L63-L80)
+- [platformio.ini:97-113](file://platformio.ini#L97-L113)
 
 ## Update Process Flow
 This sequence illustrates the end-to-end update flow from browser interaction to device reboot.
@@ -333,10 +354,10 @@ Browser->>Browser : Reload after delay
 ```
 
 **Diagram sources**
-- [ota_webserver.cpp:705-733](file://src/ota_webserver.cpp#L705-L733)
+- [ota_webserver.cpp:812-844](file://src/ota_webserver.cpp#L812-L844)
 
 **Section sources**
-- [ota_webserver.cpp:705-733](file://src/ota_webserver.cpp#L705-L733)
+- [ota_webserver.cpp:812-844](file://src/ota_webserver.cpp#L812-L844)
 
 ## Troubleshooting Guide
 Common issues and remedies:
@@ -353,14 +374,16 @@ Common issues and remedies:
   - If the device fails to boot after an update, power cycle and check for serial output.
   - If the device remains partially flashed, reflash using a known-good .bin via the standard build environment.
 
+**Updated** The AP naming convention now follows `forwarder-joyX-YY` format where X is the joystick ID and YY is the device address in hexadecimal.
+
 Preventive measures:
 - Back up the current firmware before OTA updates.
 - Validate .bin compatibility with the target ECU type.
 - Schedule updates during planned maintenance windows.
 
 **Section sources**
-- [ota_webserver.cpp:705-733](file://src/ota_webserver.cpp#L705-L733)
-- [README.md:84-103](file://README.md#L84-L103)
+- [ota_webserver.cpp:812-844](file://src/ota_webserver.cpp#L812-L844)
+- [README.md:156-166](file://README.md#L156-L166)
 
 ## Field Deployment and Maintenance
 - Field-deployed maintenance:
@@ -376,4 +399,4 @@ Preventive measures:
 [No sources needed since this section provides general guidance]
 
 ## Conclusion
-The ForwarderKE OTA system provides a straightforward mechanism to update firmware wirelessly via a web interface. By leveraging build environments and the ESP-IDF Update framework, it enables efficient field maintenance. However, security and reliability can be strengthened through cryptographic validation, watchdog-assisted rollbacks, and stricter access controls. Following the documented workflows and troubleshooting steps will help ensure reliable updates across motor driver and joystick ECUs.
+The ForwarderKE OTA system provides a straightforward mechanism to update firmware wirelessly via a web interface. By leveraging standardized build environments and the ESP-IDF Update framework, it enables efficient field maintenance. The system now uses consistent naming conventions (`forwarder-joyX-YY`) and focuses on joystick-based ECUs for wireless updates. However, security and reliability can be strengthened through cryptographic validation, watchdog-assisted rollbacks, and stricter access controls. Following the documented workflows and troubleshooting steps will help ensure reliable updates across motor driver and joystick ECUs.
