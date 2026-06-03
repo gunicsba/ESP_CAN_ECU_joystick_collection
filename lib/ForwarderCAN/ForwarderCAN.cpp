@@ -147,12 +147,22 @@ void ForwarderCAN::loop() {
 
     yield();  // Allow FreeRTOS background tasks to run between phases
 
-    // Process incoming network management messages, buffer the rest
-    CANMessage rx;
+    // Drain TWAI hardware directly to avoid the push/pop feedback loop
+    // that would occur if we called receive() here (receive() reads _rxBuf
+    // first, and loop() pushes non-mgmt frames back into _rxBuf, causing
+    // the same frame to be re-processed up to the count>30 guard every tick).
+    twai_message_t rawMsg;
     int rxCount = 0;
-    while (receive(rx, 0)) {
+    while (twai_receive(&rawMsg, 0) == ESP_OK) {
         rxCount++;
         if (rxCount > 30) break;  // prevent lockup under heavy bus load
+        CANMessage rx;
+        rx.id  = rawMsg.identifier;
+        rx.ext = rawMsg.extd;
+        rx.len = rawMsg.data_length_code;
+        if (rx.len > 8) rx.len = 8;
+        memcpy(rx.data, rawMsg.data, rx.len);
+        _rxCount++;
         uint8_t pf = J1939_GET_PF(rx.id);
         if (pf == J1939_PF_ADDRESS_CLAIMED || pf == J1939_PF_REQUEST_AC) {
             processNetworkManagement(rx);
