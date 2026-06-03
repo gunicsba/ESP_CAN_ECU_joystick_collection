@@ -216,12 +216,14 @@ static void updateLED() {
 
 static void processCAN() {
     CANMessage msg;
+    int count = 0;
     while (g_can->receive(msg, 0)) {
+        count++;
+        if (count > 30) break;  // prevent lockup under heavy bus load
         can_output_process_can(msg);
         uint8_t pf = J1939_GET_PF(msg.id);
         uint8_t sa = J1939_GET_SA(msg.id);
         uint8_t da = J1939_GET_PS(msg.id);
-        Serial.printf("[CAN RX] ID=0x%08lX PF=0x%02X SA=0x%02X len=%d\n", msg.id, pf, sa, msg.len);
         switch (pf) {
             case PF_JOYSTICK_POT1:
             case PF_JOYSTICK_POT2:
@@ -425,13 +427,12 @@ static uint32_t loopCount = 0;
 void ecu_loop() {
     uint32_t now = millis();
     loopCount++;
-    Serial.print("[D1]");Serial.flush();
+    yield();
     g_can->loop();
-    Serial.print("[D2]");Serial.flush();
     processCAN();
-    Serial.print("[D3]");Serial.flush();
+    yield();
     updateAxes();
-    Serial.print("[D4]");Serial.flush();
+    yield();
 
     // Self-loopback test: send a test frame every 3s
     if (now - lastSelfTest >= 3000) {
@@ -455,6 +456,7 @@ void ecu_loop() {
     }
     if (now - lastSolenoidUpdate > SAFETY_TIMEOUT_MS) {
         if (lastSolenoidUpdate != 0) {
+            Serial.printf("[SAFETY] Timeout %dms, all outputs OFF\n", SAFETY_TIMEOUT_MS);
             allOff();
             lastSolenoidUpdate = 0;
         }
@@ -471,6 +473,7 @@ void ecu_loop() {
     updateLED();
     can_output_loop();
 #if defined(ENABLE_OTA_WEBSERVER)
+    yield();
     ota_loop();
 #endif
 }

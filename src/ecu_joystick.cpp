@@ -132,7 +132,10 @@ static void sendButtons() {
 
 static void processCAN() {
     CANMessage msg;
+    int count = 0;
     while (g_can->receive(msg, 0)) {
+        count++;
+        if (count > 30) break;  // prevent lockup under heavy bus load
         uint8_t pf = J1939_GET_PF(msg.id);
         uint8_t ps = J1939_GET_PS(msg.id);
         if (pf == PF_LED_COLOR) {
@@ -223,9 +226,11 @@ void ecu_setup() {
 
 void ecu_loop() {
     uint32_t now = millis();
+    yield();
     g_can->loop();
     readInputs();
     processCAN();
+    yield();
 
     // Send all data at max 25Hz (40ms interval)
     if (now - lastSend >= 40) {
@@ -234,6 +239,7 @@ void ecu_loop() {
         sendPot(PF_JOYSTICK_POT2, g_localPot2);
         sendPot(PF_JOYSTICK_POT3, g_localPot3);
         sendButtons();
+        yield();
         prevPot1 = g_localPot1;
         prevPot2 = g_localPot2;
         prevPot3 = g_localPot3;
@@ -261,6 +267,7 @@ void ecu_loop() {
     }
     updateLED();
 #if defined(ENABLE_OTA_WEBSERVER)
+    yield();
     ota_loop();
 #endif
 }

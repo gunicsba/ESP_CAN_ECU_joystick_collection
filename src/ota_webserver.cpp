@@ -585,7 +585,7 @@ function startUpload() {
     xhr.send(file);
 }
 
-setInterval(fetchState, 200);
+setInterval(fetchState, 1000);
 fetchState();
 fetchConfig();
 fetchCanOut();
@@ -602,58 +602,60 @@ static void handleRoot() {
 }
 
 static void handleState() {
-    String json = "{";
-    json += "\"localAddr\":" + String(g_can ? g_can->getAddress() : 0) + ",";
-    json += "\"online\":" + String(g_can && g_can->isOnline() ? "true" : "false") + ",";
-    json += "\"uptime\":" + String(millis() / 1000) + ",";
-    json += "\"txCount\":" + String(g_can ? g_can->getTxCount() : 0) + ",";
-    json += "\"rxCount\":" + String(g_can ? g_can->getRxCount() : 0) + ",";
-    json += "\"errCount\":" + String(g_can ? g_can->getErrorCount() : 0) + ",";
+    // Use chunked transfer to avoid massive heap allocation
+    // Build JSON in a fixed buffer
+    static char buf[1024];
+    int pos = 0;
+    pos += snprintf(buf + pos, sizeof(buf) - pos,
+        "{\"localAddr\":%d,\"online\":%s,\"uptime\":%lu,\"txCount\":%lu,\"rxCount\":%lu,\"errCount\":%lu,",
+        g_can ? g_can->getAddress() : 0,
+        g_can && g_can->isOnline() ? "true" : "false",
+        millis() / 1000,
+        g_can ? g_can->getTxCount() : 0,
+        g_can ? g_can->getRxCount() : 0,
+        g_can ? g_can->getErrorCount() : 0);
 
-    // Joystick data
-    json += "\"joy\":{";
+    // Joystick data (compact)
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "\"joy\":{");
+    bool firstJoy = true;
     for (int sa = 0; sa < 256; sa++) {
         if (g_joyUpdateTime[sa] > 0 && millis() - g_joyUpdateTime[sa] < 2000) {
-            json += "\"" + String(sa) + "\":{";
-            json += "\"pots\":[" + String(g_joyPots[sa][0]) + "," + String(g_joyPots[sa][1]) + "," + String(g_joyPots[sa][2]) + "],";
-            json += "\"age\":" + String((millis() - g_joyUpdateTime[sa]) / 1000) + "},";
+            if (!firstJoy) pos += snprintf(buf + pos, sizeof(buf) - pos, ",");
+            pos += snprintf(buf + pos, sizeof(buf) - pos,
+                "\"%d\":{\"pots\":[%d,%d,%d],\"age\":%lu}",
+                sa, g_joyPots[sa][0], g_joyPots[sa][1], g_joyPots[sa][2],
+                (millis() - g_joyUpdateTime[sa]) / 1000);
+            firstJoy = false;
         }
     }
-    // Local joystick data (if running on joystick ECU)
 #if defined(ECU_TYPE_JOYSTICK)
     if (g_ecuJoystickId > 0 && g_can) {
-        json += "\"" + String(g_can->getAddress()) + "\":{";
-        json += "\"pots\":[" + String(g_localPot1) + "," + String(g_localPot2) + "," + String(g_localPot3) + "],";
-        json += "\"btns\":" + String((g_localBtn1 ? 1 : 0) | (g_localBtn2 ? 2 : 0)) + ",";
-        json += "\"age\":0},";
+        if (!firstJoy) pos += snprintf(buf + pos, sizeof(buf) - pos, ",");
+        pos += snprintf(buf + pos, sizeof(buf) - pos,
+            "\"%d\":{\"pots\":[%d,%d,%d],\"btns\":%d,\"age\":0}",
+            g_can->getAddress(), g_localPot1, g_localPot2, g_localPot3,
+            (g_localBtn1 ? 1 : 0) | (g_localBtn2 ? 2 : 0));
     }
 #endif
-    if (json.endsWith(",")) json.remove(json.length() - 1);
-    json += "},";
-
-    // Solenoid outputs
-    json += "\"sol\":[";
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "},\"sol\":[");
     for (int i = 0; i < MAX_AXIS_COUNT; i++) {
-        json += String(g_solenoidValues[i]) + ",";
+        if (i > 0) pos += snprintf(buf + pos, sizeof(buf) - pos, ",");
+        pos += snprintf(buf + pos, sizeof(buf) - pos, "%d", g_solenoidValues[i]);
     }
-    if (json.endsWith(",")) json.remove(json.length() - 1);
-    json += "],";
-
-    // Modules
-    json += "\"modules\":{";
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "],\"modules\":{");
+    bool firstMod = true;
     for (int i = 0; i < 256; i++) {
         if (g_modules[i].lastSeen > 0 && millis() - g_modules[i].lastSeen < 5000) {
-            json += "\"" + String(i) + "\":{";
-            json += "\"addr\":" + String(g_modules[i].addr) + ",";
-            json += "\"type\":" + String(g_modules[i].type) + ",";
-            json += "\"uptime\":" + String(g_modules[i].uptime) + ",";
-            json += "\"age\":" + String((millis() - g_modules[i].lastSeen) / 1000) + "},";
+            if (!firstMod) pos += snprintf(buf + pos, sizeof(buf) - pos, ",");
+            pos += snprintf(buf + pos, sizeof(buf) - pos,
+                "\"%d\":{\"addr\":%d,\"type\":%d,\"uptime\":%d,\"age\":%lu}",
+                i, g_modules[i].addr, g_modules[i].type, g_modules[i].uptime,
+                (millis() - g_modules[i].lastSeen) / 1000);
+            firstMod = false;
         }
     }
-    if (json.endsWith(",")) json.remove(json.length() - 1);
-    json += "}";
-    json += "}";
-    server.send(200, "application/json", json);
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "}}");
+    server.send(200, "application/json", buf);
 }
 
 static void handleConfigGet() {

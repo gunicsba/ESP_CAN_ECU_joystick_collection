@@ -16,7 +16,16 @@
 - [src/web_state.h](file://src/web_state.h)
 - [lib/ForwarderCAN/ForwarderCAN.h](file://lib/ForwarderCAN/ForwarderCAN.h)
 - [lib/ForwarderConfig/ForwarderConfig.h](file://lib/ForwarderConfig/ForwarderConfig.h)
+- [build_flash.bat](file://build_flash.bat)
 </cite>
+
+## Update Summary
+**Changes Made**
+- Added new ESP32-S3 target environments with USB-CDC enabled support
+- Introduced UART-only variants for ESP32-S3 without USB-CDC
+- Enhanced dual PCA9685 I2C addressing support for expanded hardware capabilities
+- Updated build environment matrix to include new S3 variants
+- Modified default environments to prioritize ESP32-S3 targets
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -31,30 +40,40 @@
 10. [Appendices](#appendices)
 
 ## Introduction
-This document explains the build system for ForwarderKE’s PlatformIO configuration. It covers the six distinct build environments, their purposes, and how they target different ECU types and deployment scenarios. It details compiler flags, build options, and ESP32-specific settings, describes the environment variable system for selecting ECU types, documents the release management process, and explains cross-compilation setup. Practical examples and troubleshooting guidance are included, along with CI/CD pipeline integration via GitHub Actions and automated release workflows.
+This document explains the build system for ForwarderKE's PlatformIO configuration. It covers the eight distinct build environments, their purposes, and how they target different ECU types and deployment scenarios. The system now includes expanded ESP32-S3 support with USB-CDC enabled and UART-only variants, plus dual PCA9685 I2C addressing for enhanced hardware capabilities. It details compiler flags, build options, and ESP32-specific settings, describes the environment variable system for selecting ECU types, documents the release management process, and explains cross-compilation setup. Practical examples and troubleshooting guidance are included, along with CI/CD pipeline integration via GitHub Actions and automated release workflows.
 
 ## Project Structure
-The project is organized around PlatformIO environments defined in the configuration file. Each environment compiles either the motor driver ECU or one of two joystick ECUs, with optional over-the-air (OTA) capabilities. The source tree separates ECU logic and shared libraries, while the CI workflow automates builds and releases.
+The project is organized around PlatformIO environments defined in the configuration file. Each environment compiles either the motor driver ECU or one of two joystick ECUs, with optional over-the-air (OTA) capabilities. The source tree separates ECU logic and shared libraries, while the CI workflow automates builds and releases across both legacy ESP32 and new ESP32-S3 targets.
 
 ```mermaid
 graph TB
 PIO["platformio.ini<br/>Environments & Flags"]
 SRC_MAIN["src/main.cpp<br/>Entry point"]
-ENV_MD["env:motor_driver<br/>ECU_TYPE_MOTOR_DRIVER"]
-ENV_J1["env:joystick1<br/>ECU_TYPE_JOYSTICK"]
-ENV_J2["env:joystick2<br/>ECU_TYPE_JOYSTICK"]
-ENV_MDO["env:motor_driver_ota<br/>extends motor_driver + OTA"]
+ENV_MD_S3["env:motor_driver_s3<br/>ESP32-S3 + USB-CDC"]
+ENV_MD_S3_UART["env:motor_driver_s3_uart<br/>ESP32-S3 + UART-only"]
+ENV_MD_LEG["env:motor_driver<br/>Legacy ESP32"]
+ENV_J1["env:joystick1<br/>ESP32 + Joystick 1"]
+ENV_J2["env:joystick2<br/>ESP32 + Joystick 2"]
+ENV_MDO_S3["env:motor_driver_s3_ota<br/>extends motor_driver_s3 + OTA"]
+ENV_MDO_S3_UART["env:motor_driver_s3_uart_ota<br/>extends motor_driver_s3_uart + OTA"]
+ENV_MDO_LEG["env:motor_driver_ota<br/>extends motor_driver + OTA"]
 ENV_J1O["env:joystick1_ota<br/>extends joystick1 + OTA"]
 ENV_J2O["env:joystick2_ota<br/>extends joystick2 + OTA"]
 LIB_CAN["lib/ForwarderCAN<br/>J1939-like CAN"]
 LIB_CFG["lib/ForwarderConfig<br/>NVS-backed config"]
-SRC_MAIN --> ENV_MD
+SRC_MAIN --> ENV_MD_S3
+SRC_MAIN --> ENV_MD_S3_UART
+SRC_MAIN --> ENV_MD_LEG
 SRC_MAIN --> ENV_J1
 SRC_MAIN --> ENV_J2
-ENV_MDO --> SRC_MAIN
+ENV_MDO_S3 --> SRC_MAIN
+ENV_MDO_S3_UART --> SRC_MAIN
+ENV_MDO_LEG --> SRC_MAIN
 ENV_J1O --> SRC_MAIN
 ENV_J2O --> SRC_MAIN
-ENV_MD --> SRC_MD["src/ecu_motor_driver.cpp/.h"]
+ENV_MD_S3 --> SRC_MD["src/ecu_motor_driver.cpp/.h"]
+ENV_MD_S3_UART --> SRC_MD
+ENV_MD_LEG --> SRC_MD
 ENV_J1 --> SRC_J1["src/ecu_joystick.cpp/.h"]
 ENV_J2 --> SRC_J2["src/ecu_joystick.cpp/.h"]
 SRC_MD --> LIB_CAN
@@ -62,43 +81,47 @@ SRC_MD --> LIB_CFG
 SRC_J1 --> LIB_CAN
 SRC_J2 --> LIB_CAN
 CI["GitHub Actions<br/>.github/workflows/build.yml"]
-CI --> ENV_MD
+CI --> ENV_MD_S3
+CI --> ENV_MD_S3_UART
+CI --> ENV_MD_LEG
 CI --> ENV_J1
 CI --> ENV_J2
-CI --> ENV_MDO
+CI --> ENV_MDO_S3
+CI --> ENV_MDO_S3_UART
+CI --> ENV_MDO_LEG
 CI --> ENV_J1O
 CI --> ENV_J2O
 ```
 
 **Diagram sources**
-- [platformio.ini:1-80](file://platformio.ini#L1-L80)
-- [src/main.cpp:1-32](file://src/main.cpp#L1-L32)
-- [src/ecu_motor_driver.cpp:1-355](file://src/ecu_motor_driver.cpp#L1-L355)
+- [platformio.ini:1-142](file://platformio.ini#L1-L142)
+- [src/main.cpp:1-39](file://src/main.cpp#L1-L39)
+- [src/ecu_motor_driver.cpp:1-479](file://src/ecu_motor_driver.cpp#L1-L479)
 - [src/ecu_joystick.cpp:1-239](file://src/ecu_joystick.cpp#L1-L239)
 - [.github/workflows/build.yml:1-81](file://.github/workflows/build.yml#L1-L81)
-- [lib/ForwarderCAN/ForwarderCAN.h:1-120](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L120)
+- [lib/ForwarderCAN/ForwarderCAN.h:1-135](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L135)
 - [lib/ForwarderConfig/ForwarderConfig.h:1-92](file://lib/ForwarderConfig/ForwarderConfig.h#L1-L92)
 
 **Section sources**
-- [platformio.ini:1-80](file://platformio.ini#L1-L80)
-- [README.md:1-131](file://README.md#L1-L131)
+- [platformio.ini:1-142](file://platformio.ini#L1-L142)
+- [README.md:1-194](file://README.md#L1-L194)
 
 ## Core Components
-- PlatformIO configuration defines a base environment and six environments: motor_driver, joystick1, joystick2, plus three OTA variants extending the base environments.
+- PlatformIO configuration defines a base environment and eight environments: three ESP32-S3 variants (USB-CDC enabled, UART-only, and legacy), two joystick environments, plus four OTA variants extending the base environments.
 - The entry point selects the ECU implementation at compile time via build flags.
 - ECU-specific implementations configure hardware pins, CAN bitrates, and device-specific peripherals.
 - Shared libraries encapsulate CAN protocol handling and persistent configuration.
 - GitHub Actions automates builds for all environments and creates releases from tagged commits.
 
 **Section sources**
-- [platformio.ini:1-80](file://platformio.ini#L1-L80)
-- [src/main.cpp:1-32](file://src/main.cpp#L1-L32)
-- [lib/ForwarderCAN/ForwarderCAN.h:1-120](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L120)
+- [platformio.ini:1-142](file://platformio.ini#L1-L142)
+- [src/main.cpp:1-39](file://src/main.cpp#L1-L39)
+- [lib/ForwarderCAN/ForwarderCAN.h:1-135](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L135)
 - [lib/ForwarderConfig/ForwarderConfig.h:1-92](file://lib/ForwarderConfig/ForwarderConfig.h#L1-L92)
 - [.github/workflows/build.yml:1-81](file://.github/workflows/build.yml#L1-L81)
 
 ## Architecture Overview
-The build system centers on PlatformIO environments that inject compile-time flags to choose the ECU type and board-specific pin assignments. The entry point conditionally includes the appropriate ECU module. OTA-enabled environments add a Wi-Fi AP and web server for firmware updates. The CI pipeline builds all environments and, on tag pushes, packages firmware binaries into a GitHub Release.
+The build system centers on PlatformIO environments that inject compile-time flags to choose the ECU type and board-specific pin assignments. The entry point conditionally includes the appropriate ECU module. OTA-enabled environments add a Wi-Fi AP and web server for firmware updates. The CI pipeline builds all environments and, on tag pushes, packages firmware binaries into a GitHub Release. The new ESP32-S3 variants offer enhanced USB-CDC support and flexible UART configurations for different deployment scenarios.
 
 ```mermaid
 sequenceDiagram
@@ -119,11 +142,11 @@ Dev-->>FW : Upload via serial or OTA
 ```
 
 **Diagram sources**
-- [platformio.ini:1-80](file://platformio.ini#L1-L80)
-- [src/main.cpp:1-32](file://src/main.cpp#L1-L32)
-- [src/ecu_motor_driver.cpp:1-355](file://src/ecu_motor_driver.cpp#L1-L355)
+- [platformio.ini:1-142](file://platformio.ini#L1-L142)
+- [src/main.cpp:1-39](file://src/main.cpp#L1-L39)
+- [src/ecu_motor_driver.cpp:1-479](file://src/ecu_motor_driver.cpp#L1-L479)
 - [src/ecu_joystick.cpp:1-239](file://src/ecu_joystick.cpp#L1-L239)
-- [lib/ForwarderCAN/ForwarderCAN.h:1-120](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L120)
+- [lib/ForwarderCAN/ForwarderCAN.h:1-135](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L135)
 - [lib/ForwarderConfig/ForwarderConfig.h:1-92](file://lib/ForwarderConfig/ForwarderConfig.h#L1-L92)
 
 ## Detailed Component Analysis
@@ -135,43 +158,58 @@ Dev-->>FW : Upload via serial or OTA
   - Monitor speed: 115200
   - Global libraries: Adafruit PWM Servo Driver, NeoPixelBus
   - Global build flags: CAN bitrate, protocol priority, watchdog timeout
-- motor_driver:
-  - Selects motor driver ECU
-  - Preferred address and ECU name constants
-  - CAN TX/RX pins, onboard WS2812 LED pin, PCA9685 I2C pins and address
+- **ESP32-S3 USB-CDC Enabled** (`motor_driver_s3`):
+  - Selects motor driver ECU with USB-CDC support
+  - Uses ESP32-S3 Box board with 8MB flash partition
+  - Enables `ARDUINO_USB_CDC_ON_BOOT=1` for USB serial support
+  - CAN TX/RX pins, onboard WS2812 LED pin, dual PCA9685 I2C pins and addresses
   - Safety timeout for solenoid outputs
-- joystick1:
-  - Selects joystick ECU 1
-  - Preferred address and joystick ID constant
+- **ESP32-S3 UART-Only** (`motor_driver_s3_uart`):
+  - Selects motor driver ECU without USB-CDC
+  - Uses standard ESP32-S3 DevKit C-1 board
+  - Same pin assignments as S3 variant but without USB-CDC
+  - Upload speed set to 115200 for serial flashing
+- **Legacy ESP32** (`motor_driver`):
+  - Traditional motor driver ECU for T-CAN boards
+  - Uses ESP32 DevKit with legacy pin assignments
+  - CAN TX/RX pins, onboard WS2812 LED pin, dual PCA9685 I2C pins and addresses
+  - Safety timeout for solenoid outputs
+- **Joystick Environments** (`joystick1`, `joystick2`):
+  - Selects joystick ECU with 3 pots and 2 buttons
+  - Preferred address and joystick ID constants
   - CAN TX/RX/SE pins, onboard WS2812 LED pin
   - Potentiometer and button pins
-- joystick2:
-  - Selects joystick ECU 2
-  - Preferred address and joystick ID constant
-  - Identical pin assignments to joystick1 except address
-- motor_driver_ota, joystick1_ota, joystick2_ota:
+- **OTA Variants**:
   - Extend their respective base environments
   - Add a flag enabling the embedded OTA web server
 
 Practical usage examples:
-- Build motor driver: pio run -e motor_driver
-- Build joystick 1: pio run -e joystick1
-- Build joystick 2: pio run -e joystick2
-- Build OTA motor driver: pio run -e motor_driver_ota
+- Build ESP32-S3 USB-CDC motor driver: `pio run -e motor_driver_s3`
+- Build ESP32-S3 UART-only motor driver: `pio run -e motor_driver_s3_uart`
+- Build legacy ESP32 motor driver: `pio run -e motor_driver`
+- Build joystick 1: `pio run -e joystick1`
+- Build joystick 2: `pio run -e joystick2`
+- Build OTA motor driver (S3): `pio run -e motor_driver_s3_ota`
+
+**Updated** Added new ESP32-S3 target environments with USB-CDC and UART-only variants, plus dual PCA9685 I2C addressing support
 
 **Section sources**
-- [platformio.ini:1-80](file://platformio.ini#L1-L80)
-- [README.md:63-103](file://README.md#L63-L103)
+- [platformio.ini:17-142](file://platformio.ini#L17-L142)
+- [README.md:126-145](file://README.md#L126-L145)
 
 ### Environment Variable System for ECU Type Selection
 - The entry point uses preprocessor directives to include the correct ECU module based on a single build flag:
-  - ECU_TYPE_MOTOR_DRIVER selects the motor driver implementation
-  - ECU_TYPE_JOYSTICK selects the joystick implementation
+  - `ECU_TYPE_MOTOR_DRIVER` selects the motor driver implementation
+  - `ECU_TYPE_JOYSTICK` selects the joystick implementation
 - If neither flag is defined, compilation fails with an explicit error, ensuring intentional ECU selection.
+- **USB-CDC Support**: The main entry point checks for `ARDUINO_USB_CDC_ON_BOOT` to handle USB enumeration timing for ESP32-S3 boards.
 
 ```mermaid
 flowchart TD
-Start(["Compile with build flags"]) --> CheckMD{"ECU_TYPE_MOTOR_DRIVER defined?"}
+Start(["Compile with build flags"]) --> CheckCDC{"ARDUINO_USB_CDC_ON_BOOT defined?"}
+CheckCDC --> |Yes| WaitUSB["Wait for USB-CDC enumeration"]
+CheckCDC --> |No| CheckMD{"ECU_TYPE_MOTOR_DRIVER defined?"}
+WaitUSB --> CheckMD
 CheckMD --> |Yes| IncludeMD["Include ecu_motor_driver.h"]
 CheckMD --> |No| CheckJoy{"ECU_TYPE_JOYSTICK defined?"}
 CheckJoy --> |Yes| IncludeJoy["Include ecu_joystick.h"]
@@ -183,44 +221,59 @@ Build --> End
 ```
 
 **Diagram sources**
-- [src/main.cpp:6-17](file://src/main.cpp#L6-L17)
+- [src/main.cpp:21-27](file://src/main.cpp#L21-L27)
 
 **Section sources**
 - [src/main.cpp:6-17](file://src/main.cpp#L6-L17)
+- [src/main.cpp:21-27](file://src/main.cpp#L21-L27)
 
 ### Compiler Flags, Build Options, and ESP32 Settings
 - Global flags:
-  - CAN_BITRATE: sets the CAN bus bitrate
-  - PROTOCOL_PRIORITY_DEFAULT: default priority for outgoing CAN frames
-  - WATCHDOG_TIMEOUT_MS: global watchdog timeout
-- motor_driver flags:
-  - ECU_TYPE_MOTOR_DRIVER, ECU_PREFERRED_ADDRESS, ECU_NAME_MOTOR_DRIVER
-  - CAN_TX_PIN, CAN_RX_PIN, WS2812_PIN
-  - PCA9685_SDA, PCA9685_SCL, PCA9685_I2C_ADDR
-  - SAFETY_TIMEOUT_MS
-- joystick1/joystick2 flags:
-  - ECU_TYPE_JOYSTICK, ECU_PREFERRED_ADDRESS, ECU_JOYSTICK_ID
-  - CAN_TX_PIN, CAN_RX_PIN, CAN_SE_PIN
-  - WS2812_PIN, POT1_PIN, POT2_PIN, BTN1_PIN, BTN2_PIN
-- OTA environments:
-  - ENABLE_OTA_WEBSERVER flag enables the embedded web server and AP
+  - `CAN_BITRATE`: sets the CAN bus bitrate
+  - `PROTOCOL_PRIORITY_DEFAULT`: default priority for outgoing CAN frames
+  - `WATCHDOG_TIMEOUT_MS`: global watchdog timeout
+- **ESP32-S3 USB-CDC Variant** (`motor_driver_s3`):
+  - `ECU_TYPE_MOTOR_DRIVER`, `ECU_PREFERRED_ADDRESS`, `ECU_NAME_MOTOR_DRIVER`
+  - `ARDUINO_USB_CDC_ON_BOOT=1`: enables USB serial support
+  - `CONFIG_I2CDEV_NOLOCK=1`: disables I2C locking for performance
+  - CAN TX/RX pins, WS2812 pin, dual PCA9685 I2C addresses (0x40, 0x41)
+  - Safety timeout for solenoid outputs
+- **ESP32-S3 UART-Only Variant** (`motor_driver_s3_uart`):
+  - Same as S3 variant but without USB-CDC support
+  - Upload speed set to 115200 for serial flashing
+- **Legacy ESP32 Variant** (`motor_driver`):
+  - Traditional pin assignments for T-CAN boards
+  - CAN TX/RX pins, onboard WS2812 LED pin, dual PCA9685 I2C pins and addresses
+- **Joystick Environments** (`joystick1`, `joystick2`):
+  - `ECU_TYPE_JOYSTICK`, `ECU_PREFERRED_ADDRESS`, `ECU_JOYSTICK_ID`
+  - CAN TX/RX/SE pins, onboard WS2812 LED pin
+  - Potentiometer and button pins
+- **OTA Environments**:
+  - `ENABLE_OTA_WEBSERVER` flag enables the embedded web server and AP
 
 Board and framework:
 - Platform: espressif32
 - Framework: arduino
-- Default board: esp32-s3-devkitc-1
+- **Default board**: esp32-s3-devkitc-1 (base environment)
+- **ESP32-S3 USB-CDC board**: esp32s3box with 8MB flash partition
+- **ESP32-S3 UART-only board**: esp32-s3-devkitc-1
+- **Legacy board**: esp32dev
 - Per-environment overrides:
-  - joystick1/joystick2 override board to esp32dev
+  - ESP32-S3 variants override board to specific models
+  - Joystick environments override board to esp32dev
+
+**Updated** Added new ESP32-S3 target environments with USB-CDC and UART-only variants, plus dual PCA9685 I2C addressing support
 
 **Section sources**
-- [platformio.ini:4-80](file://platformio.ini#L4-L80)
+- [platformio.ini:4-142](file://platformio.ini#L4-L142)
 
 ### ECU-Specific Implementations
 
 #### Motor Driver ECU
-- Initializes PCA9685 PWM drivers (one or two units), onboard LED, CAN controller, and persistent configuration
+- Initializes dual PCA9685 PWM drivers (one or two units), onboard LED, CAN controller, and persistent configuration
 - Receives joystick inputs and solenoid commands over CAN, maps joystick values to solenoid outputs, and enforces safety timeouts
 - Supports OTA via embedded web server when enabled
+- **Dual PCA9685 Support**: Automatically detects and configures second PCA9685 controller for expanded 16-channel PWM output
 
 ```mermaid
 classDiagram
@@ -252,21 +305,29 @@ class MotorDriver {
 -updateLED() void
 -sendHeartbeat() void
 }
+class DualPCA9685 {
++detectPCA9685() bool
++setPWM(channel, value) void
++begin() void
+}
 MotorDriver --> ForwarderCAN : "uses"
 MotorDriver --> ForwarderConfig : "uses"
+MotorDriver --> DualPCA9685 : "uses"
+DualPCA9685 --> PCA9685_I2C_ADDR1 : "0x40"
+DualPCA9685 --> PCA9685_I2C_ADDR2 : "0x41"
 ```
 
 **Diagram sources**
-- [src/ecu_motor_driver.cpp:1-355](file://src/ecu_motor_driver.cpp#L1-L355)
-- [lib/ForwarderCAN/ForwarderCAN.h:1-120](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L120)
+- [src/ecu_motor_driver.cpp:39-99](file://src/ecu_motor_driver.cpp#L39-L99)
+- [lib/ForwarderCAN/ForwarderCAN.h:1-135](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L135)
 - [lib/ForwarderConfig/ForwarderConfig.h:1-92](file://lib/ForwarderConfig/ForwarderConfig.h#L1-L92)
 
 **Section sources**
-- [src/ecu_motor_driver.cpp:1-355](file://src/ecu_motor_driver.cpp#L1-L355)
+- [src/ecu_motor_driver.cpp:1-479](file://src/ecu_motor_driver.cpp#L1-L479)
 - [src/ecu_motor_driver.h:1-5](file://src/ecu_motor_driver.h#L1-L5)
 
 #### Joystick ECU
-- Reads two potentiometers and two buttons, periodically broadcasting joystick data and button states over CAN
+- Reads three potentiometers and two buttons, periodically broadcasting joystick data and button states over CAN
 - Supports OTA via embedded web server when enabled
 
 ```mermaid
@@ -300,7 +361,7 @@ Joystick --> ForwarderConfig : "uses"
 
 **Diagram sources**
 - [src/ecu_joystick.cpp:1-239](file://src/ecu_joystick.cpp#L1-L239)
-- [lib/ForwarderCAN/ForwarderCAN.h:1-120](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L120)
+- [lib/ForwarderCAN/ForwarderCAN.h:1-135](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L135)
 - [lib/ForwarderConfig/ForwarderConfig.h:1-92](file://lib/ForwarderConfig/ForwarderConfig.h#L1-L92)
 
 **Section sources**
@@ -308,7 +369,7 @@ Joystick --> ForwarderConfig : "uses"
 - [src/ecu_joystick.h:1-5](file://src/ecu_joystick.h#L1-L5)
 
 ### OTA Web Server
-- Enabled by the ENABLE_OTA_WEBSERVER flag
+- Enabled by the `ENABLE_OTA_WEBSERVER` flag
 - Creates a Wi-Fi AP with a predictable hostname and serves a dashboard UI
 - Provides endpoints to:
   - View live state and bus statistics
@@ -334,19 +395,21 @@ AP-->>Host : AP disconnects after reboot
 
 **Diagram sources**
 - [src/ota_webserver.cpp:766-796](file://src/ota_webserver.cpp#L766-L796)
-- [platformio.ini:63-79](file://platformio.ini#L63-L79)
+- [platformio.ini:40-43](file://platformio.ini#L40-L43)
 
 **Section sources**
 - [src/ota_webserver.cpp:1-809](file://src/ota_webserver.cpp#L1-L809)
 - [src/ota_webserver.h:1-6](file://src/ota_webserver.h#L1-L6)
-- [README.md:84-103](file://README.md#L84-L103)
+- [README.md:147-166](file://README.md#L147-L166)
 
 ### Cross-Compilation and Dependency Resolution
 - Platform: ESP32 (Espressif)
 - Framework: Arduino
-- Board selection per environment:
-  - Default: esp32-s3-devkitc-1
-  - joystick1/joystick2 override to esp32dev
+- **Board selection per environment**:
+  - **Base**: esp32-s3-devkitc-1
+  - **ESP32-S3 USB-CDC**: esp32s3box with 8MB flash partition
+  - **ESP32-S3 UART-only**: esp32-s3-devkitc-1
+  - **Legacy**: esp32dev
 - Libraries:
   - Adafruit PWM Servo Driver Library
   - Makuna NeoPixelBus
@@ -354,14 +417,16 @@ AP-->>Host : AP disconnects after reboot
   - ForwarderCAN: J1939-like 29-bit ID layout, PF definitions, address claiming, send/receive helpers
   - ForwarderConfig: NVS-backed configuration for axes and CAN output rules
 
+**Updated** Added new ESP32-S3 board configurations with different flash partitions and USB-CDC support
+
 **Section sources**
-- [platformio.ini:4-12](file://platformio.ini#L4-L12)
-- [lib/ForwarderCAN/ForwarderCAN.h:1-120](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L120)
+- [platformio.ini:4-142](file://platformio.ini#L4-L142)
+- [lib/ForwarderCAN/ForwarderCAN.h:1-135](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L135)
 - [lib/ForwarderConfig/ForwarderConfig.h:1-92](file://lib/ForwarderConfig/ForwarderConfig.h#L1-L92)
 
 ### CI/CD Pipeline Integration
 - Triggers on pushes to main and tags matching v*
-- Matrix builds all six environments
+- **Matrix builds all eight environments** (including new ESP32-S3 variants)
 - Caches PlatformIO installation to speed up jobs
 - Installs PlatformIO Core and builds each environment
 - Uploads firmware artifacts for later use
@@ -375,7 +440,7 @@ participant PIO as "PlatformIO"
 participant ART as "Artifacts"
 participant REL as "GitHub Release"
 GH->>ACT : on push/pull_request
-ACT->>PIO : pio run -e <env> (matrix)
+ACT->>PIO : pio run -e <env> (matrix with 8 environments)
 PIO-->>ART : .pio/build/<env>/firmware.bin
 ACT->>REL : on tags, create release
 REL-->>GH : publish release assets
@@ -388,11 +453,11 @@ REL-->>GH : publish release assets
 - [.github/workflows/build.yml:1-81](file://.github/workflows/build.yml#L1-L81)
 
 ## Dependency Analysis
-The build-time selection and environment flags create a tight coupling between configuration and source modules. The shared state and web UI rely on conditional compilation to expose only relevant symbols.
+The build-time selection and environment flags create a tight coupling between configuration and source modules. The shared state and web UI rely on conditional compilation to expose only relevant symbols. The new ESP32-S3 variants introduce additional complexity with USB-CDC support and dual PCA9685 detection.
 
 ```mermaid
 graph LR
-Flags["Build Flags<br/>ECU_TYPE_*"] --> Main["src/main.cpp"]
+Flags["Build Flags<br/>ECU_TYPE_*, USB-CDC, PCA9685"] --> Main["src/main.cpp"]
 Main --> MD["src/ecu_motor_driver.cpp"]
 Main --> J1["src/ecu_joystick.cpp"]
 MD --> CAN["lib/ForwarderCAN"]
@@ -402,15 +467,18 @@ OWA["src/ota_webserver.cpp"] --> MD
 OWA --> J1
 WEB["src/web_state.cpp"] --> MD
 WEB --> J1
+S3_Board["ESP32-S3 Boards<br/>USB-CDC, UART-only"] --> MD
+Legacy_Board["Legacy ESP32 Boards"] --> MD
+Legacy_Board --> J1
 ```
 
 **Diagram sources**
 - [src/main.cpp:6-17](file://src/main.cpp#L6-L17)
-- [src/ecu_motor_driver.cpp:1-355](file://src/ecu_motor_driver.cpp#L1-L355)
+- [src/ecu_motor_driver.cpp:1-479](file://src/ecu_motor_driver.cpp#L1-L479)
 - [src/ecu_joystick.cpp:1-239](file://src/ecu_joystick.cpp#L1-L239)
 - [src/ota_webserver.cpp:1-809](file://src/ota_webserver.cpp#L1-L809)
 - [src/web_state.cpp:1-20](file://src/web_state.cpp#L1-L20)
-- [lib/ForwarderCAN/ForwarderCAN.h:1-120](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L120)
+- [lib/ForwarderCAN/ForwarderCAN.h:1-135](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L135)
 - [lib/ForwarderConfig/ForwarderConfig.h:1-92](file://lib/ForwarderConfig/ForwarderConfig.h#L1-L92)
 
 **Section sources**
@@ -422,17 +490,27 @@ WEB --> J1
 - Watchdog and safety timeouts prevent stale actuator states.
 - OTA update progress reporting and mDNS availability improve operational reliability.
 - Using cached PlatformIO installations reduces CI runtime overhead.
-
-[No sources needed since this section provides general guidance]
+- **ESP32-S3 USB-CDC**: Provides faster development workflow with USB serial support.
+- **Dual PCA9685**: Enables 16-channel PWM output for expanded hardware capabilities.
+- **I2C Locking Disabled**: Improves I2C performance for multiple PCA9685 controllers.
 
 ## Troubleshooting Guide
 Common build issues and resolutions:
 - Missing ECU type flag:
   - Symptom: Compilation error indicating no ECU_TYPE defined
-  - Fix: Choose one of the six environments (e.g., motor_driver, joystick1, joystick2, or their OTA variants)
+  - Fix: Choose one of the eight environments (e.g., motor_driver_s3, motor_driver_s3_uart, motor_driver, joystick1, joystick2, or their OTA variants)
+- **ESP32-S3 USB-CDC Issues**:
+  - Symptom: USB serial not available or slow enumeration
+  - Fix: Ensure `ARDUINO_USB_CDC_ON_BOOT=1` is defined for S3 variants; verify ESP32-S3 board configuration
+- **Dual PCA9685 Detection Failures**:
+  - Symptom: Only 8 channels available instead of expected 16
+  - Fix: Verify PCA9685 I2C addresses (0x40, 0x41) are correct and both controllers are physically connected
+- **UART-Only vs USB-CDC Confusion**:
+  - Symptom: Unexpected serial communication behavior
+  - Fix: Choose appropriate environment - motor_driver_s3 for USB-CDC, motor_driver_s3_uart for pure UART
 - Incorrect board selection:
   - Symptom: Pin conflicts or missing pins
-  - Fix: Ensure the environment’s board matches your hardware; joystick environments default to esp32dev
+  - Fix: Ensure the environment's board matches your hardware; ESP32-S3 variants use different boards than legacy ESP32
 - OTA web server not appearing:
   - Symptom: No AP or web UI
   - Fix: Build with an OTA environment (ending in _ota) or define ENABLE_OTA_WEBSERVER in the base environment
@@ -443,43 +521,66 @@ Common build issues and resolutions:
   - Symptom: Upload endpoint returns an error
   - Fix: Confirm the uploaded file is a valid firmware binary produced by the build; verify AP connectivity and mDNS resolution
 
+**Updated** Added troubleshooting guidance for new ESP32-S3 variants and dual PCA9685 features
+
 **Section sources**
 - [src/main.cpp:15-17](file://src/main.cpp#L15-L17)
-- [platformio.ini:32-61](file://platformio.ini#L32-L61)
+- [platformio.ini:18-142](file://platformio.ini#L18-L142)
 - [src/ota_webserver.cpp:705-733](file://src/ota_webserver.cpp#L705-L733)
-- [README.md:84-103](file://README.md#L84-L103)
+- [README.md:147-166](file://README.md#L147-L166)
 
 ## Conclusion
-The ForwarderKE build system leverages PlatformIO environments to cleanly separate ECU roles and deployment modes. Build flags determine the ECU type and hardware pin assignments, while shared libraries encapsulate protocol and persistence concerns. The CI pipeline automates builds and releases, and OTA environments streamline field updates. Following the documented environments and troubleshooting steps ensures reliable builds and deployments across motor driver and joystick ECUs.
-
-[No sources needed since this section summarizes without analyzing specific files]
+The ForwarderKE build system leverages PlatformIO environments to cleanly separate ECU roles and deployment modes across both legacy ESP32 and new ESP32-S3 targets. Build flags determine the ECU type, hardware pin assignments, and board-specific configurations, while shared libraries encapsulate protocol and persistence concerns. The CI pipeline automates builds and releases across all eight environments, and OTA environments streamline field updates. The new ESP32-S3 variants provide enhanced USB-CDC support and flexible UART configurations, while dual PCA9685 I2C addressing expands hardware capabilities. Following the documented environments and troubleshooting steps ensures reliable builds and deployments across motor driver and joystick ECUs.
 
 ## Appendices
 
 ### Practical Build Examples
-- Build motor driver: pio run -e motor_driver
-- Build joystick 1: pio run -e joystick1
-- Build joystick 2: pio run -e joystick2
-- Build OTA motor driver: pio run -e motor_driver_ota
-- Build OTA joystick 1: pio run -e joystick1_ota
-- Build OTA joystick 2: pio run -e joystick2_ota
+- **ESP32-S3 USB-CDC Motor Driver**: `pio run -e motor_driver_s3`
+- **ESP32-S3 UART-Only Motor Driver**: `pio run -e motor_driver_s3_uart`
+- **Legacy ESP32 Motor Driver**: `pio run -e motor_driver`
+- **ESP32-S3 USB-CDC Joystick 1**: `pio run -e joystick1`
+- **ESP32-S3 USB-CDC Joystick 2**: `pio run -e joystick2`
+- **OTA Motor Driver (S3 USB-CDC)**: `pio run -e motor_driver_s3_ota`
+- **OTA Motor Driver (S3 UART-only)**: `pio run -e motor_driver_s3_uart_ota`
+- **OTA Legacy Motor Driver**: `pio run -e motor_driver_ota`
+- **OTA Joystick 1**: `pio run -e joystick1_ota`
+- **OTA Joystick 2**: `pio run -e joystick2_ota`
+
+**Updated** Added new ESP32-S3 build examples with USB-CDC and UART-only variants
 
 **Section sources**
-- [README.md:67-103](file://README.md#L67-L103)
+- [README.md:126-166](file://README.md#L126-L166)
 
 ### Environment Variables Reference
-- ECU_TYPE_MOTOR_DRIVER: selects motor driver ECU
-- ECU_TYPE_JOYSTICK: selects joystick ECU
-- ECU_PREFERRED_ADDRESS: preferred CAN address for the ECU
-- ECU_NAME_MOTOR_DRIVER: lower byte of motor driver ECU name
-- ECU_JOYSTICK_ID: joystick unit identifier (1 or 2)
-- CAN_TX_PIN, CAN_RX_PIN, CAN_SE_PIN: CAN transceiver pins
-- WS2812_PIN: onboard status LED pin
-- POT1_PIN, POT2_PIN, BTN1_PIN, BTN2_PIN: joystick input pins
-- PCA9685_SDA, PCA9685_SCL, PCA9685_I2C_ADDR: PCA9685 I2C configuration
-- ENABLE_OTA_WEBSERVER: enable embedded OTA web server
+- `ECU_TYPE_MOTOR_DRIVER`: selects motor driver ECU
+- `ECU_TYPE_JOYSTICK`: selects joystick ECU
+- `ECU_PREFERRED_ADDRESS`: preferred CAN address for the ECU
+- `ECU_NAME_MOTOR_DRIVER`: lower byte of motor driver ECU name
+- `ECU_JOYSTICK_ID`: joystick unit identifier (1 or 2)
+- `CAN_TX_PIN`, `CAN_RX_PIN`, `CAN_SE_PIN`: CAN transceiver pins
+- `WS2812_PIN`: onboard status LED pin
+- `POT1_PIN`, `POT2_PIN`, `POT3_PIN`, `BTN1_PIN`, `BTN2_PIN`: joystick input pins
+- **ESP32-S3 Specific**:
+  - `ARDUINO_USB_CDC_ON_BOOT`: enable USB serial support
+  - `CONFIG_I2CDEV_NOLOCK`: disable I2C locking for performance
+  - `PCA9685_I2C_ADDR1`, `PCA9685_I2C_ADDR2`: dual PCA9685 I2C addresses (0x40, 0x41)
+- `ENABLE_OTA_WEBSERVER`: enable embedded OTA web server
+
+**Updated** Added new ESP32-S3 environment variables and dual PCA9685 addressing support
 
 **Section sources**
-- [platformio.ini:17-79](file://platformio.ini#L17-L79)
-- [src/ecu_motor_driver.cpp:14-37](file://src/ecu_motor_driver.cpp#L14-L37)
+- [platformio.ini:17-142](file://platformio.ini#L17-L142)
+- [src/ecu_motor_driver.cpp:14-41](file://src/ecu_motor_driver.cpp#L14-L41)
 - [src/ecu_joystick.cpp:11-37](file://src/ecu_joystick.cpp#L11-L37)
+
+### Board Configuration Matrix
+| Environment | Board Model | Flash Size | USB-CDC | UART-Only | Purpose |
+|-------------|-------------|------------|---------|-----------|---------|
+| motor_driver_s3 | esp32s3box | 8MB | ✓ | ✗ | ESP32-S3 with USB-CDC |
+| motor_driver_s3_uart | esp32-s3-devkitc-1 | 8MB | ✗ | ✓ | ESP32-S3 UART-only |
+| motor_driver | esp32dev | 4MB | ✗ | ✗ | Legacy ESP32 |
+| joystick1 | esp32dev | 4MB | ✗ | ✗ | Joystick ECU 1 |
+| joystick2 | esp32dev | 4MB | ✗ | ✗ | Joystick ECU 2 |
+
+**Section sources**
+- [platformio.ini:18-142](file://platformio.ini#L18-L142)

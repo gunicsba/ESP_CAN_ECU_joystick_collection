@@ -107,17 +107,9 @@ void ForwarderCAN::sendAddressClaimed() {
 void ForwarderCAN::loop() {
     if (!_twaiStarted) return;
 
-    Serial.print("[F1]");Serial.flush();
     // Check bus state and recover
     twai_status_info_t status;
     if (twai_get_status_info(&status) == ESP_OK) {
-        static uint32_t lastStatPrint = 0;
-        if (millis() - lastStatPrint >= 2000) {
-            lastStatPrint = millis();
-            Serial.printf("[CAN] state=%d tx_err=%lu rx_err=%lu rxq=%lu txq=%lu\n",
-                status.state, status.tx_error_counter, status.rx_error_counter,
-                status.msgs_to_rx, status.msgs_to_tx);
-        }
         if (status.state == TWAI_STATE_STOPPED) {
             Serial.printf("[CAN] TWAI stopped (tx_err=%lu rx_err=%lu), restarting...\n",
                 status.tx_error_counter, status.rx_error_counter);
@@ -131,16 +123,13 @@ void ForwarderCAN::loop() {
         }
     }
 
-    Serial.print("[F2]");Serial.flush();
     // Read alerts to clear them
     uint32_t alerts;
     twai_read_alerts(&alerts, 0);
 
-    Serial.print("[F3]");Serial.flush();
     // Address claiming state machine
     if (_state == ACS_CLAIMING) {
         if (millis() - _claimTimer >= CLAIM_TIMEOUT_MS) {
-            // No conflict received within timeout, address is ours
             _state = ACS_CLAIMED;
             Serial.printf("[CAN] Address 0x%02X claimed successfully\n", _currentAddress);
         }
@@ -149,7 +138,6 @@ void ForwarderCAN::loop() {
             if (_claimAttempts < MAX_CLAIM_ATTEMPTS) {
                 tryClaimAddress();
             } else {
-                // Try alternate address based on name hash
                 _preferredAddress = 0x30 + (_name[7] & 0x0F);
                 _claimAttempts = 0;
                 tryClaimAddress();
@@ -157,17 +145,14 @@ void ForwarderCAN::loop() {
         }
     }
 
-    Serial.print("[F4]");Serial.flush();
+    yield();  // Allow FreeRTOS background tasks to run between phases
+
     // Process incoming network management messages, buffer the rest
     CANMessage rx;
     int rxCount = 0;
     while (receive(rx, 0)) {
         rxCount++;
-        if (rxCount > 50) {
-            Serial.print("[FWD_CAN_RX_LIMIT]");Serial.flush();
-            break;
-        }
-        Serial.print("[FWD_CAN_RX]");Serial.flush();
+        if (rxCount > 30) break;  // prevent lockup under heavy bus load
         uint8_t pf = J1939_GET_PF(rx.id);
         if (pf == J1939_PF_ADDRESS_CLAIMED || pf == J1939_PF_REQUEST_AC) {
             processNetworkManagement(rx);
@@ -175,7 +160,8 @@ void ForwarderCAN::loop() {
             bufPush(rx);  // preserve for application layer
         }
     }
-    Serial.print("[F5]");Serial.flush();
+
+    yield();  // Yield after RX processing
 }
 
 void ForwarderCAN::processNetworkManagement(const CANMessage& msg) {
@@ -222,7 +208,7 @@ bool ForwarderCAN::send(uint8_t pf, uint8_t ps, const uint8_t* data, uint8_t len
         memcpy(msg.data, data, len);
     }
 
-    esp_err_t ret = twai_transmit(&msg, pdMS_TO_TICKS(100));
+    esp_err_t ret = twai_transmit(&msg, pdMS_TO_TICKS(10));
     if (ret == ESP_OK) {
         _txCount++;
         return true;
