@@ -55,10 +55,16 @@ static uint8_t prevButtons = 0xFF;
 static uint32_t lastSend = 0;
 static uint32_t lastHeartbeat = 0;
 static uint32_t lastLedUpdate = 0;
-static uint8_t ledR = 0, ledG = 8, ledB = 0;
+static uint8_t ledR = 0, ledG = 255, ledB = 0;
 static uint8_t ledBrightness = 255;
 static uint32_t identifyTimer = 0;
 static bool identifyActive = false;
+
+// Motor ECU status tracking
+static uint32_t lastMotorEcuMsg = 0;  // Timestamp of last message from motor ECU (0x20)
+static constexpr uint32_t MOTOR_ECU_TIMEOUT_MS = 1000;  // 1 second = motor ECU offline
+static uint32_t lastAnyMsgReceived = 0;  // Timestamp of last received CAN message (any source)
+static constexpr uint32_t CAN_BUS_TIMEOUT_MS = 2000;  // 2 seconds with no messages = bus broken
 
 // Button debounce: require stable state for 50ms
 static uint32_t btn1Debounce = 0, btn2Debounce = 0;
@@ -95,7 +101,25 @@ static void updateLED() {
         (ledG * ledBrightness) / 255,
         (ledB * ledBrightness) / 255
     );
+    // Check TWAI hardware state + message timeout for bus failure detection
+    bool canBusBroken = !g_can->isOnline();
+    twai_status_info_t twaiStatus;
+    if (twai_get_status_info(&twaiStatus) == ESP_OK) {
+        // Bus is broken if: STOPPED, BUS_OFF, or high TX error counter
+        if (twaiStatus.state == TWAI_STATE_STOPPED || 
+            twaiStatus.state == TWAI_STATE_BUS_OFF ||
+            twaiStatus.tx_error_counter >= 127) {
+            canBusBroken = true;
+        }
+    }
+    // In NO_ACK mode, TWAI doesn't detect physical disconnection.
+    // Detect broken bus by checking if ANY messages were received recently.
+    if (now - lastAnyMsgReceived > CAN_BUS_TIMEOUT_MS) {
+        canBusBroken = true;
+    }
+    
     if (identifyActive) {
+        // Identify: flashing white
         if ((now / 150) % 2 == 0) {
             color = RgbColor(255, 255, 255);
         } else {
@@ -104,12 +128,16 @@ static void updateLED() {
         if (now - identifyTimer > 3000) {
             identifyActive = false;
         }
-    } else if (!g_can->isOnline()) {
+    } else if (canBusBroken) {
+        // CAN bus broken: blinking RED
         if ((now / 500) % 2 == 0) {
-            color = RgbColor(20, 10, 0);
+            color = RgbColor(100, 0, 0);
         } else {
             color = RgbColor(0, 0, 0);
         }
+    } else if (lastMotorEcuMsg == 0 || (now - lastMotorEcuMsg > MOTOR_ECU_TIMEOUT_MS)) {
+        // Motor ECU offline: solid RED
+        color = RgbColor(80, 0, 0);
     }
     strip.SetPixelColor(0, color);
     strip.Show();
@@ -138,6 +166,15 @@ static void processCAN() {
         if (count > 30) break;  // prevent lockup under heavy bus load
         uint8_t pf = J1939_GET_PF(msg.id);
         uint8_t ps = J1939_GET_PS(msg.id);
+        uint8_t sa = J1939_GET_SA(msg.id);
+        // Only count messages from OTHER devices for bus health (exclude loopback)
+        if (sa != g_can->getAddress()) {
+            lastAnyMsgReceived = millis();
+        }
+        // Track motor ECU messages (source address 0x20)
+        if (sa == 0x20) {
+            lastMotorEcuMsg = millis();
+        }
         if (pf == PF_LED_COLOR) {
             if (ps == DA_BROADCAST || ps == g_can->getAddress()) {
                 if (msg.len >= 3) {
@@ -214,6 +251,8 @@ void ecu_setup() {
         }
     }
     Serial.printf("[Joystick%d] Ready on address 0x%02X.\n", ECU_JOYSTICK_ID, g_can->getAddress());
+    // Initialize bus health timer - if no messages within 2s, bus is considered broken
+    lastAnyMsgReceived = millis();
     Serial.printf("[Joystick%d] CAN_TX=%d CAN_RX=%d SPEED_MODE=%d ME2107_EN=%d bitrate=%d\n",
         ECU_JOYSTICK_ID, CAN_TX_PIN, CAN_RX_PIN, CAN_SPEED_MODE_PIN, CAN_ME2107_EN_PIN, CAN_BITRATE);
 #if defined(ENABLE_OTA_WEBSERVER)

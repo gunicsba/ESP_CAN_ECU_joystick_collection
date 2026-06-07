@@ -417,10 +417,10 @@ static void autoConfigDefaults() {
         ax.sourceAddress = defaults[i].src;
         ax.potIndex = defaults[i].pot;
         ax.outputChannel = defaults[i].ch;
-        ax.deadbandMin = 472;   // ~46%
-        ax.deadbandMax = 552;   // ~54%
-        ax.pwmMin = 50;         // ~20%
-        ax.pwmMax = 200;        // ~78%
+        ax.deadbandMin = 307;   // midpoint ±20%
+        ax.deadbandMax = 717;   // midpoint ±20%
+        ax.pwmMin = 20;         // ~8%
+        ax.pwmMax = 100;        // ~39%
         ax.flags = FLAG_AXIS_ENABLED | FLAG_AXIS_BIDIRECTIONAL;
         cfgMgr.saveAxisConfig(i, ax);
     }

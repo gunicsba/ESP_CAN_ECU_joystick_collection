@@ -21,11 +21,11 @@
 
 ## Update Summary
 **Changes Made**
-- Added documentation for new button gate system with three activation modes
-- Updated axis configuration UI documentation to include inversion flag support
-- Enhanced deadband status visualization documentation with real-time direction indication
-- Added real-time button state display and updates via CAN protocol
-- Updated polling intervals and button state handling documentation
+- Added documentation for the new Deadband Tuning tab with interactive real-time deadband adjustment
+- Enhanced CSS styling documentation for visual indicators including deadband zones and pointer indicators
+- Updated dashboard layout documentation for improved mobile compatibility
+- Added real-time deadband visualization with interactive step controls
+- Updated configuration management to support new interactive deadband features
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -164,12 +164,39 @@ The dashboard presents:
 - Solenoid outputs grid showing 8 or 16 channels depending on PCA expansion.
 - CAN bus statistics: TX count, RX count, error count, and uptime.
 - Module discovery table with address, type, uptime, last seen, and actions to identify and set addresses.
+- **New Deadband Tuning tab**: Interactive real-time deadband adjustment with visual indicators showing deadband zones and live joystick positions.
 
 The UI renders these views by fetching /api/state and periodically refreshing.
+
+**Updated** Added new Deadband Tuning tab with interactive real-time deadband adjustment and enhanced visual indicators.
 
 **Section sources**
 - [ota_webserver.cpp:32-501](file://src/ota_webserver.cpp#L32-L501)
 - [ota_webserver.cpp:510-563](file://src/ota_webserver.cpp#L510-L563)
+
+### Deadband Tuning System
+**New Feature**: The Deadband Tuning tab provides interactive real-time deadband adjustment for joystick potentiometers.
+
+#### Visual Indicators
+- **Deadband Zone**: Yellow dashed zone showing the current deadband range (deadbandMin to deadbandMax)
+- **Position Pointer**: Green vertical indicator showing the current joystick position
+- **Direction Indicator**: Color-coded status showing whether the joystick is in REV, FWD, or DEAD zone
+- **Offset Indicator**: Percentage showing how far the deadband center is from neutral (0%)
+
+#### Interactive Controls
+- **Step Adjustment Buttons**: +/-1 and +/-10 increment buttons for precise deadband tuning
+- **Live Preview**: Real-time visual feedback as adjustments are made
+- **Auto-detection**: Automatically detects connected joysticks and their potentiometer assignments
+- **Unmapped Pot Support**: Allows tuning of joystick pots even when not currently mapped to axes
+
+#### Status Indicators
+- **Online Status**: Green indicates live data, red indicates missing data
+- **Direction Status**: Blue for reverse, green for forward, yellow for dead zone
+- **Offset Warning**: Color-coded offset percentage (green for optimal, yellow for acceptable, red for problematic)
+
+**Section sources**
+- [ota_webserver.cpp:314-455](file://src/ota_webserver.cpp#L314-L455)
+- [ota_webserver.cpp:457-534](file://src/ota_webserver.cpp#L457-L534)
 
 ### Configuration Management
 Axis mapping:
@@ -187,6 +214,8 @@ Device address assignment:
 
 Remote device management:
 - Identify command triggers LED blinking on target devices.
+
+**Updated** Enhanced deadband visualization with real-time direction indication and interactive adjustment capabilities.
 
 **Section sources**
 - [ota_webserver.cpp:565-703](file://src/ota_webserver.cpp#L565-L703)
@@ -304,6 +333,12 @@ Heartbeat scanning populates module discovery data from incoming heartbeat frame
 - Adjusting axis mapping with button gate:
   - Go to the Motor Mapping tab, modify axis parameters including button gate settings, and click Save to Motor Driver.
 
+- **Using the Deadband Tuning tab**:
+  - Navigate to the Deadband tab to view all connected joystick pots.
+  - Use +/-1 and +/-10 buttons to adjust deadbandMin and deadbandMax values.
+  - Watch the visual indicators show real-time feedback on deadband zone and joystick position.
+  - Click Save All to apply changes to the configuration.
+
 - Configuring CAN output rules:
   - Open the CAN Output tab, configure rules, and click Save.
 
@@ -320,6 +355,8 @@ Heartbeat scanning populates module discovery data from incoming heartbeat frame
     - curl -X POST http://192.168.4.1/api/address -H "Content-Type: application/json" -d '{"target":33,"address":34}'
     - curl -X POST http://192.168.4.1/api/config -H "Content-Type: application/json" -d '{"axes":[{"axisIdx":0,"sourceAddress":33,"potIndex":0,"outputChannel":0,"deadbandMin":492,"deadbandMax":532,"pwmMin":64,"pwmMax":128,"flags":5,"buttonGate":1}]}'
     - curl -X POST http://192.168.4.1/api/canoutput -H "Content-Type: application/json" -d '{"rules":[{"ruleIdx":0,"enabled":true,"matchPF":16,"matchSA":33,"gpioPin":2,"mode":0,"momentaryMs":500}]}'
+
+**Updated** Added practical usage examples for the new Deadband Tuning tab.
 
 **Section sources**
 - [ota_webserver.cpp:506-796](file://src/ota_webserver.cpp#L506-L796)
@@ -366,6 +403,9 @@ JOY --> CFG
 - CAN throughput: The server reads CAN messages during each loop iteration and scans for heartbeats to keep module discovery fresh.
 - Memory usage: JSON payloads are constructed dynamically; avoid excessive allocations by keeping payloads concise.
 - OTA updates: Large firmware images can take time; ensure stable power and network conditions during updates.
+- **Deadband Tuning Performance**: The interactive deadband adjustment uses client-side calculations and only sends configuration updates when Save All is clicked.
+
+**Updated** Added performance considerations for the new Deadband Tuning feature.
 
 ## Troubleshooting Guide
 - Cannot connect to Soft AP:
@@ -384,6 +424,11 @@ JOY --> CFG
   - Ensure the joystick device is broadcasting button states via CAN protocol.
   - Verify the button gate configuration matches the intended behavior (BTN1 Pressed/Released/None).
 
+- **Deadband Tuning issues**:
+  - Ensure joysticks are properly connected and sending data.
+  - Check that the Deadband tab shows "No pots detected" message when no joysticks are connected.
+  - Verify that the Save All button applies changes to the configuration.
+
 - OTA update fails:
   - Ensure the selected file is a valid .bin image.
   - Retry after confirming stable power and network conditions.
@@ -392,13 +437,15 @@ JOY --> CFG
   - The target device must support address setting and be within broadcast range.
   - Confirm the new address is within the allowed range.
 
+**Updated** Added troubleshooting guidance for the new Deadband Tuning tab.
+
 **Section sources**
 - [ota_webserver.cpp:766-791](file://src/ota_webserver.cpp#L766-L791)
 - [ecu_motor_driver.cpp:234-244](file://src/ecu_motor_driver.cpp#L234-L244)
 - [ecu_joystick.cpp:132-142](file://src/ecu_joystick.cpp#L132-L142)
 
 ## Conclusion
-The ForwarderKE web interface provides a comprehensive, real-time dashboard and configuration management system for motor driver and joystick ECUs. It leverages a lightweight HTTP server, persistent configuration storage, and a J1939-like CAN protocol to deliver responsive monitoring and control. The recent addition of button gate systems, inversion flag support, and enhanced deadband visualization significantly improves the precision and safety of vehicle control operations. While the access point is intentionally open for simplicity, production deployments should consider additional security measures. The modular design enables easy extension of features such as additional CAN output rules, advanced diagnostics, and enhanced access control.
+The ForwarderKE web interface provides a comprehensive, real-time dashboard and configuration management system for motor driver and joystick ECUs. It leverages a lightweight HTTP server, persistent configuration storage, and a J1939-like CAN protocol to deliver responsive monitoring and control. The recent addition of button gate systems, inversion flag support, and enhanced deadband visualization significantly improves the precision and safety of vehicle control operations. The new Deadband Tuning tab with interactive real-time adjustment provides intuitive deadband calibration with visual feedback, while enhanced CSS styling and mobile compatibility improve the user experience across different devices. While the access point is intentionally open for simplicity, production deployments should consider additional security measures. The modular design enables easy extension of features such as additional CAN output rules, advanced diagnostics, and enhanced access control.
 
 ## Appendices
 
@@ -413,3 +460,22 @@ The ForwarderKE web interface provides a comprehensive, real-time dashboard and 
 - Software: Arduino framework with ESP-IDF CAN stack.
 - Wiring: Proper CAN termination and signal integrity.
 - Environment: Stable power supply and minimal electromagnetic interference.
+
+### CSS Styling and Visual Indicators
+**New Features**:
+- **Deadband Visualization**: Dedicated CSS classes for visual deadband representation
+- **Responsive Design**: Enhanced mobile compatibility with media queries
+- **Visual Feedback**: Color-coded status indicators for different operational states
+- **Interactive Elements**: Styled buttons and sliders for better user interaction
+
+**CSS Classes**:
+- `.db-bar`: Container for deadband visualization
+- `.db-zone`: Yellow dashed zone representing deadband range
+- `.db-ptr`: Green pointer showing current joystick position
+- `.db-step-row`: Row for step adjustment controls
+- `.db-btn`: Styled buttons for +/- adjustments
+- `.db-stale`: Visual indicator for disconnected devices
+
+**Section sources**
+- [ota_webserver.cpp:173-186](file://src/ota_webserver.cpp#L173-L186)
+- [ota_webserver.cpp:163-165](file://src/ota_webserver.cpp#L163-L165)

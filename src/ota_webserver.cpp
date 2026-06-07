@@ -142,7 +142,7 @@ input[type="range"] {
 }
 .axis-row {
     display: grid;
-    grid-template-columns: 36px 50px 65px 65px 45px 70px 70px 50px 50px 85px;
+    grid-template-columns: 36px 50px 80px 80px 55px 70px 70px 50px 50px 100px;
     gap: 6px;
     align-items: center;
     padding: 6px 0;
@@ -161,7 +161,7 @@ input[type="range"] {
 }
 .canout-row.header { color: #94a3b8; font-weight: 500; border-bottom: 2px solid #475569; }
 @media (max-width: 1000px) {
-    .axis-row { grid-template-columns: 30px 45px 55px 55px 40px 60px 60px 45px 45px 75px; }
+    .axis-row { grid-template-columns: 30px 45px 70px 70px 50px 60px 60px 45px 45px 90px; }
 }
 .slider-group { display: flex; align-items: center; gap: 8px; }
 .slider-group input[type="range"] { flex: 1; }
@@ -385,13 +385,26 @@ function renderDeadbandTuning() {
     const pots = {};
     for (let i = 0; i < 16; i++) {
         const a = axes[i];
-        if (!a || !(a.flags & 1)) continue;
+        if (!a || !a.sourceAddress) continue;
         const key = a.sourceAddress + '_' + a.potIndex;
-        if (!pots[key]) pots[key] = { src: a.sourceAddress, pot: a.potIndex, dbMin: a.deadbandMin, dbMax: a.deadbandMax, axes: [] };
+        if (!pots[key]) pots[key] = { src: a.sourceAddress, pot: a.potIndex, dbMin: a.deadbandMin || 307, dbMax: a.deadbandMax || 717, axes: [] };
         pots[key].axes.push(i);
         if (gDB[key]) {
             pots[key].dbMin = gDB[key].min;
             pots[key].dbMax = gDB[key].max;
+        }
+    }
+    // Also add pots from live joystick state not already shown
+    if (gState.joy) {
+        for (const srcStr in gState.joy) {
+            const src = parseInt(srcStr);
+            const joy = gState.joy[srcStr];
+            if (joy && joy.pots) {
+                for (let pi = 0; pi < joy.pots.length; pi++) {
+                    const key = src + '_' + pi;
+                    if (!pots[key]) pots[key] = { src: src, pot: pi, dbMin: 307, dbMax: 717, axes: [] };
+                }
+            }
         }
     }
     const keys = Object.keys(pots).sort();
@@ -437,7 +450,7 @@ function renderDeadbandTuning() {
         h += '<button class="db-btn p" onclick="adjDB(' + sa + ',' + pi + ',\'max\',10)">+10</button></div>';
         h += '</div></div>';
     }
-    if (!keys.length) h = '<div style="color:#64748b;text-align:center;padding:16px">No axes configured. Add axes in Motor Mapping first.</div>';
+    if (!keys.length) h = '<div style="color:#64748b;text-align:center;padding:16px">No pots detected. Connect a joystick or configure axes in Motor Mapping.</div>';
     document.getElementById('dbTuneList').innerHTML = h;
 }
 
@@ -445,15 +458,17 @@ function adjDB(src, pot, which, delta) {
     const key = src + '_' + pot;
     const axes = gConfig.axes || [];
     if (!gDB[key]) {
+        // Find first axis with this src+pot to get current deadband
         for (let i = 0; i < 16; i++) {
             const a = axes[i];
-            if (a && a.sourceAddress === src && a.potIndex === pot && (a.flags & 1)) {
-                gDB[key] = { min: a.deadbandMin, max: a.deadbandMax };
+            if (a && a.sourceAddress === src && a.potIndex === pot) {
+                gDB[key] = { min: a.deadbandMin || 307, max: a.deadbandMax || 717 };
                 break;
             }
         }
     }
-    if (!gDB[key]) return;
+    // If still no entry (unmapped pot from live state), use defaults
+    if (!gDB[key]) gDB[key] = { min: 307, max: 717 };
     if (which === 'min') gDB[key].min = Math.max(0, Math.min(1023, gDB[key].min + delta));
     else gDB[key].max = Math.max(0, Math.min(1023, gDB[key].max + delta));
     renderDeadbandTuning();
@@ -470,9 +485,10 @@ async function saveDeadband() {
     const axes = gConfig.axes || [];
     const updated = [];
     let changed = 0;
+    // Copy axes from config
     for (let i = 0; i < 16; i++) {
-        const a = axes[i] || { sourceAddress:0, potIndex:0, outputChannel:i, deadbandMin:492, deadbandMax:532, pwmMin:64, pwmMax:128, flags:0, buttonGate:0 };
-        a.axisIdx = i;  // Required by server POST handler
+        const a = axes[i] || { sourceAddress:0, potIndex:0, outputChannel:i, deadbandMin:307, deadbandMax:717, pwmMin:20, pwmMax:100, flags:0, buttonGate:0 };
+        a.axisIdx = i;
         const key = a.sourceAddress + '_' + a.potIndex;
         if (gDB[key]) {
             a.deadbandMin = gDB[key].min;
@@ -480,6 +496,24 @@ async function saveDeadband() {
             changed++;
         }
         updated.push(a);
+    }
+    // Save unmapped pots (from live joystick) to unused axis slots
+    for (const key in gDB) {
+        const alreadyInAxes = updated.some(a => (a.sourceAddress + '_' + a.potIndex) === key);
+        if (!alreadyInAxes) {
+            const parts = key.split('_');
+            const src = parseInt(parts[0]), pot = parseInt(parts[1]);
+            // Find first unused axis slot (sourceAddress=0 or disabled with no real assignment)
+            const slotIdx = updated.findIndex(a => !a.sourceAddress && !(a.flags & 1));
+            if (slotIdx >= 0) {
+                updated[slotIdx].sourceAddress = src;
+                updated[slotIdx].potIndex = pot;
+                updated[slotIdx].deadbandMin = gDB[key].min;
+                updated[slotIdx].deadbandMax = gDB[key].max;
+                updated[slotIdx].flags = 1;  // enabled for tracking, no output channel change
+                changed++;
+            }
+        }
     }
     console.log('Saving deadband:', changed, 'overrides', JSON.stringify(gDB));
     try {
@@ -528,37 +562,85 @@ function renderMapping() {
     h += '<div title="Enable this axis">En</div>';
     h += '<div title="Joystick source address">Src</div>';
     h += '<div title="Potentiometer input (1-3)">Pot</div>';
-    h += '<div title="PCA9685 output channel (0-15). Ch 0-7 = 1st board, Ch 8-15 = 2nd board">Ch</div>';
+    h += '<div title="Output number (1-8) as labeled on dev board. Each output uses 2 PCA9685 channels">Out</div>';
     h += '<div title="Minimum PWM output duty (0-255). Scaled to 0-4095 on the PCA9685 output">PWM Min</div>';
     h += '<div title="Maximum PWM output duty (0-255). Scaled to 0-4095 on the PCA9685 output">PWM Max</div>';
-    h += '<div title="Bidirectional: uses paired channels Ch (fwd) + Ch+1 (rev)">Bidir</div>';
+    h += '<div title="Bidirectional: uses paired channels for fwd/rev">Bidir</div>';
     h += '<div title="Invert: swaps forward/reverse channels so joystick direction is reversed">Inv</div>';
     h += '<div title="Button gate: axis only active when BTN1 is pressed (BTN1) or released (!BTN1). None = always active">Gate</div>';
     h += '</div>';
     h += '<div style="padding:6px 8px;color:#94a3b8;font-size:0.72rem;grid-column:1/-1;line-height:1.5">';
+    h += '<b>Out:</b> Output 1-8 (labeled on board). Each uses 2 channels (fwd+rev). ';
     h += '<b>PWM Min/Max:</b> Output duty range (0=off, 255=full). ';
-    h += '<b>Bidir:</b> Uses 2 channels: Ch=forward, Ch+1=reverse. ';
+    h += '<b>Bidir:</b> Uses paired channels. ';
     h += '<b>Gate:</b> When BTN1 toggles, gated axes zero their outputs (valve returns to center).';
     h += '</div>';
     for (let i = 0; i < 16; i++) {
-        const a = axes[i] || { sourceAddress: 0, potIndex: 0, outputChannel: i, deadbandMin: 492, deadbandMax: 532, pwmMin: 64, pwmMax: 128, flags: 0, buttonGate: 0 };
+        const a = axes[i] || { sourceAddress: 0, potIndex: 0, outputChannel: 0, deadbandMin: 307, deadbandMax: 717, pwmMin: 20, pwmMax: 100, flags: 0, buttonGate: 0 };
         const en = (a.flags & 1) ? 'checked' : '';
         const bidir = (a.flags & 2) ? 'checked' : '';
         const invert = (a.flags & 4) ? 'checked' : '';
+        // Convert channel to output number (0->1, 2->2, 4->3, ..., 14->8)
+        const outNum = Math.floor(a.outputChannel / 2) + 1;
+        // Build output dropdown options (1-8)
+        let outOpts = '';
+        for (let o = 1; o <= 8; o++) {
+            outOpts += `<option value="${o}" ${outNum==o?'selected':''}>${o}</option>`;
+        }
         h += `<div class="axis-row">
             <div>${i}</div>
-            <div><input type="checkbox" id="a${i}_en" ${en}></div>
-            <div><select id="a${i}_src"><option value="0">Off</option><option value="33" ${a.sourceAddress==33?'selected':''}>0x21</option><option value="34" ${a.sourceAddress==34?'selected':''}>0x22</option></select></div>
-            <div><select id="a${i}_pot"><option value="0" ${a.potIndex==0?'selected':''}>Pot1</option><option value="1" ${a.potIndex==1?'selected':''}>Pot2</option><option value="2" ${a.potIndex==2?'selected':''}>Pot3</option></select></div>
-            <div><input type="number" id="a${i}_ch" value="${a.outputChannel}" min="0" max="15" style="width:45px"></div>
+            <div><input type="checkbox" id="a${i}_en" ${en} onchange="checkChannelConflicts()"></div>
+            <div><select id="a${i}_src" style="min-width:65px"><option value="0">Off</option><option value="33" ${a.sourceAddress==33?'selected':''}>0x21</option><option value="34" ${a.sourceAddress==34?'selected':''}>0x22</option></select></div>
+            <div><select id="a${i}_pot" style="min-width:65px"><option value="0" ${a.potIndex==0?'selected':''}>Pot1</option><option value="1" ${a.potIndex==1?'selected':''}>Pot2</option><option value="2" ${a.potIndex==2?'selected':''}>Pot3</option></select></div>
+            <div><select id="a${i}_ch" onchange="checkChannelConflicts()" style="width:55px">${outOpts}</select></div>
             <div><input type="number" id="a${i}_pwmin" value="${a.pwmMin}" min="0" max="255" style="width:60px"></div>
             <div><input type="number" id="a${i}_pwmax" value="${a.pwmMax}" min="0" max="255" style="width:60px"></div>
-            <div><input type="checkbox" id="a${i}_bidir" ${bidir}></div>
+            <div><input type="checkbox" id="a${i}_bidir" ${bidir} onchange="checkChannelConflicts()"></div>
             <div><input type="checkbox" id="a${i}_inv" ${invert}></div>
-            <div><select id="a${i}_bgate"><option value="0" ${a.buttonGate==0?'selected':''}>None</option><option value="1" ${a.buttonGate==1?'selected':''}>BTN1</option><option value="2" ${a.buttonGate==2?'selected':''}>!BTN1</option></select></div>
+            <div><select id="a${i}_bgate" style="min-width:65px"><option value="0" ${a.buttonGate==0?'selected':''}>None</option><option value="1" ${a.buttonGate==1?'selected':''}>BTN1</option><option value="2" ${a.buttonGate==2?'selected':''}>!BTN1</option></select></div>
         </div>`;
     }
+    h += '<div id="channelWarnings" style="grid-column:1/-1;padding:8px;margin-top:8px;"></div>';
     document.getElementById('axisList').innerHTML = h;
+    checkChannelConflicts();
+}
+
+function checkChannelConflicts() {
+    const warnings = [];
+    const outputMap = {};  // output number -> [axis indices using it]
+    for (let i = 0; i < 16; i++) {
+        const enEl = document.getElementById('a' + i + '_en');
+        const outEl = document.getElementById('a' + i + '_ch');
+        if (!enEl || !outEl) continue;
+        if (!enEl.checked) continue;  // Skip disabled axes
+        const outNum = parseInt(outEl.value);  // 1-8
+        // Track output usage (each output uses 2 channels: fwd+rev)
+        if (!outputMap[outNum]) outputMap[outNum] = [];
+        outputMap[outNum].push(i);
+    }
+    // Check for duplicate output usage
+    for (const outNum in outputMap) {
+        if (outputMap[outNum].length > 1) {
+            const axes = outputMap[outNum].join(', ');
+            warnings.push({ type: 'error', msg: `Output ${outNum} used by multiple active axes: ${axes}` });
+        }
+    }
+    // Render warnings
+    const warnDiv = document.getElementById('channelWarnings');
+    if (warnDiv) {
+        if (warnings.length === 0) {
+            warnDiv.innerHTML = '';
+        } else {
+            let h = '';
+            for (const w of warnings) {
+                const color = w.type === 'error' ? '#ef4444' : '#f59e0b';
+                const icon = w.type === 'error' ? '✖' : '⚠';
+                h += `<div style="color:${color};font-size:0.85rem;margin:4px 0;"><b>${icon}</b> ${w.msg}</div>`;
+            }
+            warnDiv.innerHTML = h;
+        }
+    }
+    return warnings.length === 0;
 }
 
 async function fetchState() {
@@ -656,18 +738,38 @@ async function setAddr(current) {
 }
 
 async function saveMapping() {
+    // Check for channel conflicts before saving
+    if (!checkChannelConflicts()) {
+        setStatus('Fix channel conflicts before saving', 'error');
+        return;
+    }
     const axes = [];
     const cfgAxes = gConfig.axes || [];
+    // Build deadband map by (src, pot) so remapping inherits the pot's deadband
+    const dbMap = {};
+    for (let i = 0; i < 16; i++) {
+        const a = cfgAxes[i];
+        if (a && a.sourceAddress) {
+            const key = a.sourceAddress + '_' + a.potIndex;
+            if (!dbMap[key]) dbMap[key] = { min: a.deadbandMin || 307, max: a.deadbandMax || 717 };
+        }
+    }
     for (let i = 0; i < 16; i++) {
         const flags = (document.getElementById('a' + i + '_en').checked ? 1 : 0) | (document.getElementById('a' + i + '_bidir').checked ? 2 : 0) | (document.getElementById('a' + i + '_inv').checked ? 4 : 0);
-        const existing = cfgAxes[i] || {};
+        const src = parseInt(document.getElementById('a' + i + '_src').value);
+        const pot = parseInt(document.getElementById('a' + i + '_pot').value);
+        const dbKey = src + '_' + pot;
+        const db = dbMap[dbKey] || { min: 307, max: 717 };
+        // Convert output number (1-8) to channel (0,2,4,6,8,10,12,14)
+        const outNum = parseInt(document.getElementById('a' + i + '_ch').value);
+        const channel = (outNum - 1) * 2;
         axes.push({
             axisIdx: i,
-            sourceAddress: parseInt(document.getElementById('a' + i + '_src').value),
-            potIndex: parseInt(document.getElementById('a' + i + '_pot').value),
-            outputChannel: parseInt(document.getElementById('a' + i + '_ch').value),
-            deadbandMin: existing.deadbandMin != null ? existing.deadbandMin : 492,
-            deadbandMax: existing.deadbandMax != null ? existing.deadbandMax : 532,
+            sourceAddress: src,
+            potIndex: pot,
+            outputChannel: channel,
+            deadbandMin: db.min,
+            deadbandMax: db.max,
             pwmMin: parseInt(document.getElementById('a' + i + '_pwmin').value),
             pwmMax: parseInt(document.getElementById('a' + i + '_pwmax').value),
             flags: flags,

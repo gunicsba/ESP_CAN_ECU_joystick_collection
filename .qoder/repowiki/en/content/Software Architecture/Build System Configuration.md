@@ -14,6 +14,7 @@
 - [src/ota_webserver.h](file://src/ota_webserver.h)
 - [src/web_state.cpp](file://src/web_state.cpp)
 - [src/web_state.h](file://src/web_state.h)
+- [src/can_output.cpp](file://src/can_output.cpp)
 - [lib/ForwarderCAN/ForwarderCAN.h](file://lib/ForwarderCAN/ForwarderCAN.h)
 - [lib/ForwarderConfig/ForwarderConfig.h](file://lib/ForwarderConfig/ForwarderConfig.h)
 - [build_flash.bat](file://build_flash.bat)
@@ -21,9 +22,10 @@
 
 ## Update Summary
 **Changes Made**
-- Updated upload speed configuration from 115200 to 460800 baud for ESP32-S3 UART-only environment
-- Enhanced development workflow documentation to reflect improved flashing performance
-- Updated troubleshooting section to include upload speed considerations
+- Updated safety timeout from 80ms to 200ms across all environments for improved reliability
+- Added soft_reset upload flags for ESP32-S3 boards to enhance OTA update reliability
+- Enhanced upload speed configuration from 115200 to 460800 baud for ESP32-S3 UART-only environment
+- Updated troubleshooting section to include upload speed and safety timeout considerations
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -48,12 +50,12 @@ graph TB
 PIO["platformio.ini<br/>Environments & Flags"]
 SRC_MAIN["src/main.cpp<br/>Entry point"]
 ENV_MD_S3["env:motor_driver_s3<br/>ESP32-S3 + USB-CDC"]
-ENV_MD_S3_UART["env:motor_driver_s3_uart<br/>ESP32-S3 + UART-only<br/>Upload Speed: 460800 baud"]
+ENV_MD_S3_UART["env:motor_driver_s3_uart<br/>ESP32-S3 + UART-only<br/>Upload Speed: 460800 baud<br/>Soft Reset: enabled"]
 ENV_MD_LEG["env:motor_driver<br/>Legacy ESP32"]
 ENV_J1["env:joystick1<br/>ESP32 + Joystick 1"]
 ENV_J2["env:joystick2<br/>ESP32 + Joystick 2"]
 ENV_MDO_S3["env:motor_driver_s3_ota<br/>extends motor_driver_s3 + OTA"]
-ENV_MDO_S3_UART["env:motor_driver_s3_uart_ota<br/>extends motor_driver_s3_uart + OTA"]
+ENV_MDO_S3_UART["env:motor_driver_s3_uart_ota<br/>extends motor_driver_s3_uart + OTA<br/>Soft Reset: enabled"]
 ENV_MDO_LEG["env:motor_driver_ota<br/>extends motor_driver + OTA"]
 ENV_J1O["env:joystick1_ota<br/>extends joystick1 + OTA"]
 ENV_J2O["env:joystick2_ota<br/>extends joystick2 + OTA"]
@@ -92,16 +94,16 @@ CI --> ENV_J2O
 ```
 
 **Diagram sources**
-- [platformio.ini:1-142](file://platformio.ini#L1-L142)
+- [platformio.ini:1-148](file://platformio.ini#L1-L148)
 - [src/main.cpp:1-39](file://src/main.cpp#L1-L39)
 - [src/ecu_motor_driver.cpp:1-479](file://src/ecu_motor_driver.cpp#L1-L479)
 - [src/ecu_joystick.cpp:1-239](file://src/ecu_joystick.cpp#L1-L239)
 - [.github/workflows/build.yml:1-81](file://.github/workflows/build.yml#L1-L81)
-- [lib/ForwarderCAN/ForwarderCAN.h:1-135](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L135)
-- [lib/ForwarderConfig/ForwarderConfig.h:1-92](file://lib/ForwarderConfig/ForwarderConfig.h#L1-L92)
+- [lib/ForwarderCAN/ForwarderCAN.h:1-137](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L137)
+- [lib/ForwarderConfig/ForwarderConfig.h:1-100](file://lib/ForwarderConfig/ForwarderConfig.h#L1-L100)
 
 **Section sources**
-- [platformio.ini:1-142](file://platformio.ini#L1-L142)
+- [platformio.ini:1-148](file://platformio.ini#L1-L148)
 - [README.md:1-194](file://README.md#L1-L194)
 
 ## Core Components
@@ -112,14 +114,14 @@ CI --> ENV_J2O
 - GitHub Actions automates builds for all environments and creates releases from tagged commits.
 
 **Section sources**
-- [platformio.ini:1-142](file://platformio.ini#L1-L142)
+- [platformio.ini:1-148](file://platformio.ini#L1-L148)
 - [src/main.cpp:1-39](file://src/main.cpp#L1-L39)
-- [lib/ForwarderCAN/ForwarderCAN.h:1-135](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L135)
-- [lib/ForwarderConfig/ForwarderConfig.h:1-92](file://lib/ForwarderConfig/ForwarderConfig.h#L1-L92)
+- [lib/ForwarderCAN/ForwarderCAN.h:1-137](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L137)
+- [lib/ForwarderConfig/ForwarderConfig.h:1-100](file://lib/ForwarderConfig/ForwarderConfig.h#L1-L100)
 - [.github/workflows/build.yml:1-81](file://.github/workflows/build.yml#L1-L81)
 
 ## Architecture Overview
-The build system centers on PlatformIO environments that inject compile-time flags to choose the ECU type and board-specific pin assignments. The entry point conditionally includes the appropriate ECU module. OTA-enabled environments add a Wi-Fi AP and web server for firmware updates. The CI pipeline builds all environments and, on tag pushes, packages firmware binaries into a GitHub Release. The new ESP32-S3 variants offer enhanced USB-CDC support and flexible UART configurations for different deployment scenarios, with optimized upload speeds for improved development workflow.
+The build system centers on PlatformIO environments that inject compile-time flags to choose the ECU type and board-specific pin assignments. The entry point conditionally includes the appropriate ECU module. OTA-enabled environments add a Wi-Fi AP and web server for firmware updates. The CI pipeline builds all environments and, on tag pushes, packages firmware binaries into a GitHub Release. The new ESP32-S3 variants offer enhanced USB-CDC support and flexible UART configurations for different deployment scenarios, with optimized upload speeds for improved development workflow and enhanced OTA reliability through soft reset uploads.
 
 ```mermaid
 sequenceDiagram
@@ -136,16 +138,16 @@ PIO->>Src : Compile with selected ECU flags
 Src->>Lib : Link ForwarderCAN, ForwarderConfig
 Lib-->>Src : Symbols resolved
 Src-->>FW : Produce firmware.bin
-Dev-->>FW : Upload via serial (460800 baud for UART-only)
+Dev-->>FW : Upload via serial (460800 baud for UART-only with soft reset)
 ```
 
 **Diagram sources**
-- [platformio.ini:1-142](file://platformio.ini#L1-L142)
+- [platformio.ini:1-148](file://platformio.ini#L1-L148)
 - [src/main.cpp:1-39](file://src/main.cpp#L1-L39)
 - [src/ecu_motor_driver.cpp:1-479](file://src/ecu_motor_driver.cpp#L1-L479)
 - [src/ecu_joystick.cpp:1-239](file://src/ecu_joystick.cpp#L1-L239)
-- [lib/ForwarderCAN/ForwarderCAN.h:1-135](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L135)
-- [lib/ForwarderConfig/ForwarderConfig.h:1-92](file://lib/ForwarderConfig/ForwarderConfig.h#L1-L92)
+- [lib/ForwarderCAN/ForwarderCAN.h:1-137](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L137)
+- [lib/ForwarderConfig/ForwarderConfig.h:1-100](file://lib/ForwarderConfig/ForwarderConfig.h#L1-L100)
 
 ## Detailed Component Analysis
 
@@ -161,25 +163,28 @@ Dev-->>FW : Upload via serial (460800 baud for UART-only)
   - Uses ESP32-S3 Box board with 8MB flash partition
   - Enables `ARDUINO_USB_CDC_ON_BOOT=1` for USB serial support
   - CAN TX/RX pins, onboard WS2812 LED pin, dual PCA9685 I2C pins and addresses
-  - Safety timeout for solenoid outputs
+  - Safety timeout for solenoid outputs increased to 200ms for improved reliability
 - **ESP32-S3 UART-Only** (`motor_driver_s3_uart`):
   - Selects motor driver ECU without USB-CDC
   - Uses standard ESP32-S3 DevKit C-1 board
   - Same pin assignments as S3 variant but without USB-CDC
   - Upload speed set to 460800 baud for significantly faster serial flashing
+  - Soft reset upload flags enabled for enhanced OTA reliability
 - **Legacy ESP32** (`motor_driver`):
   - Traditional motor driver ECU for T-CAN boards
   - Uses ESP32 DevKit with legacy pin assignments
   - CAN TX/RX pins, onboard WS2812 LED pin, dual PCA9685 I2C pins and addresses
-  - Safety timeout for solenoid outputs
+  - Safety timeout for solenoid outputs increased to 200ms for improved reliability
 - **Joystick Environments** (`joystick1`, `joystick2`):
   - Selects joystick ECU with 3 pots and 2 buttons
   - Preferred address and joystick ID constants
   - CAN TX/RX/SE pins, onboard WS2812 LED pin
   - Potentiometer and button pins
+  - Safety timeout for solenoid outputs increased to 200ms for improved reliability
 - **OTA Variants**:
   - Extend their respective base environments
   - Add a flag enabling the embedded OTA web server
+  - Soft reset upload flags enabled for ESP32-S3 variants
 
 Practical usage examples:
 - Build ESP32-S3 USB-CDC motor driver: `pio run -e motor_driver_s3`
@@ -189,10 +194,10 @@ Practical usage examples:
 - Build joystick 2: `pio run -e joystick2`
 - Build OTA motor driver (S3): `pio run -e motor_driver_s3_ota`
 
-**Updated** Enhanced upload speed configuration for ESP32-S3 UART-only environment from 115200 to 460800 baud, providing significantly faster development workflow
+**Updated** Increased safety timeout from 80ms to 200ms across all environments for improved reliability, added soft_reset upload flags for ESP32-S3 boards to enhance OTA update reliability
 
 **Section sources**
-- [platformio.ini:17-142](file://platformio.ini#L17-L142)
+- [platformio.ini:17-148](file://platformio.ini#L17-L148)
 - [README.md:126-145](file://README.md#L126-L145)
 
 ### Environment Variable System for ECU Type Selection
@@ -231,23 +236,28 @@ Build --> End
   - `PROTOCOL_PRIORITY_DEFAULT`: default priority for outgoing CAN frames
   - `WATCHDOG_TIMEOUT_MS`: global watchdog timeout
 - **ESP32-S3 USB-CDC Variant** (`motor_driver_s3`):
-  - `ECU_TYPE_MOTOR_DRIVER`, `ECU_PREFERRED_ADDRESS`, `ECU_NAME_MOTOR_DRIVER`
+  - `ECU_TYPE_MOTOR_DRIVER`, `ECU_PREFERRED_ADDRESS=0x20`, `ECU_NAME_MOTOR_DRIVER=0x01`
   - `ARDUINO_USB_CDC_ON_BOOT=1`: enables USB serial support
   - `CONFIG_I2CDEV_NOLOCK=1`: disables I2C locking for performance
   - CAN TX/RX pins, WS2812 pin, dual PCA9685 I2C addresses (0x40, 0x41)
-  - Safety timeout for solenoid outputs
+  - Safety timeout for solenoid outputs increased to 200ms for improved reliability
 - **ESP32-S3 UART-Only Variant** (`motor_driver_s3_uart`):
   - Same as S3 variant but without USB-CDC support
   - Upload speed set to 460800 baud for significantly faster serial flashing
+  - Soft reset upload flags enabled for enhanced OTA reliability
+  - Safety timeout for solenoid outputs increased to 200ms for improved reliability
 - **Legacy ESP32 Variant** (`motor_driver`):
   - Traditional pin assignments for T-CAN boards
   - CAN TX/RX pins, onboard WS2812 LED pin, dual PCA9685 I2C pins and addresses
+  - Safety timeout for solenoid outputs increased to 200ms for improved reliability
 - **Joystick Environments** (`joystick1`, `joystick2`):
-  - `ECU_TYPE_JOYSTICK`, `ECU_PREFERRED_ADDRESS`, `ECU_JOYSTICK_ID`
+  - `ECU_TYPE_JOYSTICK`, `ECU_PREFERRED_ADDRESS=0x21/0x22`, `ECU_JOYSTICK_ID=1/2`
   - CAN TX/RX/SE pins, onboard WS2812 LED pin
   - Potentiometer and button pins
+  - Safety timeout for solenoid outputs increased to 200ms for improved reliability
 - **OTA Environments**:
   - `ENABLE_OTA_WEBSERVER` flag enables the embedded web server and AP
+  - Soft reset upload flags enabled for ESP32-S3 variants
 
 Board and framework:
 - Platform: espressif32
@@ -260,10 +270,10 @@ Board and framework:
   - ESP32-S3 variants override board to specific models
   - Joystick environments override board to esp32dev
 
-**Updated** Enhanced upload speed configuration for ESP32-S3 UART-only environment from 115200 to 460800 baud
+**Updated** Increased safety timeout from 80ms to 200ms across all environments for improved reliability, added soft_reset upload flags for ESP32-S3 boards to enhance OTA update reliability
 
 **Section sources**
-- [platformio.ini:4-142](file://platformio.ini#L4-L142)
+- [platformio.ini:4-148](file://platformio.ini#L4-L148)
 
 ### ECU-Specific Implementations
 
@@ -272,6 +282,7 @@ Board and framework:
 - Receives joystick inputs and solenoid commands over CAN, maps joystick values to solenoid outputs, and enforces safety timeouts
 - Supports OTA via embedded web server when enabled
 - **Dual PCA9685 Support**: Automatically detects and configures second PCA9685 controller for expanded 16-channel PWM output
+- **Safety Timeout**: All motor driver variants now enforce a 200ms safety timeout for solenoid outputs to prevent stale actuator states
 
 ```mermaid
 classDiagram
@@ -317,8 +328,8 @@ DualPCA9685 --> PCA9685_I2C_ADDR2 : "0x41"
 
 **Diagram sources**
 - [src/ecu_motor_driver.cpp:39-99](file://src/ecu_motor_driver.cpp#L39-L99)
-- [lib/ForwarderCAN/ForwarderCAN.h:1-135](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L135)
-- [lib/ForwarderConfig/ForwarderConfig.h:1-92](file://lib/ForwarderConfig/ForwarderConfig.h#L1-L92)
+- [lib/ForwarderCAN/ForwarderCAN.h:1-137](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L137)
+- [lib/ForwarderConfig/ForwarderConfig.h:1-100](file://lib/ForwarderConfig/ForwarderConfig.h#L1-L100)
 
 **Section sources**
 - [src/ecu_motor_driver.cpp:1-479](file://src/ecu_motor_driver.cpp#L1-L479)
@@ -327,6 +338,7 @@ DualPCA9685 --> PCA9685_I2C_ADDR2 : "0x41"
 #### Joystick ECU
 - Reads three potentiometers and two buttons, periodically broadcasting joystick data and button states over CAN
 - Supports OTA via embedded web server when enabled
+- **Safety Timeout**: All joystick variants now enforce a 200ms safety timeout for solenoid outputs to prevent stale actuator states
 
 ```mermaid
 classDiagram
@@ -359,8 +371,8 @@ Joystick --> ForwarderConfig : "uses"
 
 **Diagram sources**
 - [src/ecu_joystick.cpp:1-239](file://src/ecu_joystick.cpp#L1-L239)
-- [lib/ForwarderCAN/ForwarderCAN.h:1-135](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L135)
-- [lib/ForwarderConfig/ForwarderConfig.h:1-92](file://lib/ForwarderConfig/ForwarderConfig.h#L1-L92)
+- [lib/ForwarderCAN/ForwarderCAN.h:1-137](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L137)
+- [lib/ForwarderConfig/ForwarderConfig.h:1-100](file://lib/ForwarderConfig/ForwarderConfig.h#L1-L100)
 
 **Section sources**
 - [src/ecu_joystick.cpp:1-239](file://src/ecu_joystick.cpp#L1-L239)
@@ -375,6 +387,7 @@ Joystick --> ForwarderConfig : "uses"
   - Configure CAN-triggered GPIO outputs
   - Perform firmware updates via HTTP POST
 - Uses mDNS for service discovery
+- **Enhanced Reliability**: ESP32-S3 variants now use soft reset upload flags to improve OTA update reliability
 
 ```mermaid
 sequenceDiagram
@@ -385,7 +398,7 @@ participant OTA as "OTA Handler"
 Host->>AP : Connect to AP (SSID : forwarder-*)
 Host->>UI : Open http : //192.168.4.1 or http : //<hostname>.local
 UI->>OTA : POST /update with .bin file
-OTA->>OTA : Update.begin/write/end
+OTA->>OTA : Update.begin(write,end) with soft reset
 OTA-->>UI : 200 OK
 UI-->>Host : "Update successful! Rebooting..."
 AP-->>Host : AP disconnects after reboot
@@ -406,7 +419,7 @@ AP-->>Host : AP disconnects after reboot
 - **Board selection per environment**:
   - **Base**: esp32-s3-devkitc-1
   - **ESP32-S3 USB-CDC**: esp32s3box with 8MB flash partition
-  - **ESP32-S3 UART-only**: esp32-s3-devkitc-1 with 460800 baud upload speed
+  - **ESP32-S3 UART-only**: esp32-s3-devkitc-1 with 460800 baud upload speed and soft reset flags
   - **Legacy**: esp32dev
 - Libraries:
   - Adafruit PWM Servo Driver Library
@@ -415,12 +428,12 @@ AP-->>Host : AP disconnects after reboot
   - ForwarderCAN: J1939-like 29-bit ID layout, PF definitions, address claiming, send/receive helpers
   - ForwarderConfig: NVS-backed configuration for axes and CAN output rules
 
-**Updated** Enhanced upload speed configuration for ESP32-S3 UART-only environment from 115200 to 460800 baud
+**Updated** Increased safety timeout from 80ms to 200ms across all environments for improved reliability, added soft_reset upload flags for ESP32-S3 boards to enhance OTA update reliability
 
 **Section sources**
-- [platformio.ini:4-142](file://platformio.ini#L4-L142)
-- [lib/ForwarderCAN/ForwarderCAN.h:1-135](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L135)
-- [lib/ForwarderConfig/ForwarderConfig.h:1-92](file://lib/ForwarderConfig/ForwarderConfig.h#L1-L92)
+- [platformio.ini:4-148](file://platformio.ini#L4-L148)
+- [lib/ForwarderCAN/ForwarderCAN.h:1-137](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L137)
+- [lib/ForwarderConfig/ForwarderConfig.h:1-100](file://lib/ForwarderConfig/ForwarderConfig.h#L1-L100)
 
 ### CI/CD Pipeline Integration
 - Triggers on pushes to main and tags matching v*
@@ -455,7 +468,7 @@ The build-time selection and environment flags create a tight coupling between c
 
 ```mermaid
 graph LR
-Flags["Build Flags<br/>ECU_TYPE_*, USB-CDC, PCA9685"] --> Main["src/main.cpp"]
+Flags["Build Flags<br/>ECU_TYPE_*, USB-CDC, PCA9685, SAFETY_TIMEOUT"] --> Main["src/main.cpp"]
 Main --> MD["src/ecu_motor_driver.cpp"]
 Main --> J1["src/ecu_joystick.cpp"]
 MD --> CAN["lib/ForwarderCAN"]
@@ -465,7 +478,7 @@ OWA["src/ota_webserver.cpp"] --> MD
 OWA --> J1
 WEB["src/web_state.cpp"] --> MD
 WEB --> J1
-S3_Board["ESP32-S3 Boards<br/>USB-CDC, UART-only"] --> MD
+S3_Board["ESP32-S3 Boards<br/>USB-CDC, UART-only, Soft Reset"] --> MD
 Legacy_Board["Legacy ESP32 Boards"] --> MD
 Legacy_Board --> J1
 ```
@@ -476,8 +489,8 @@ Legacy_Board --> J1
 - [src/ecu_joystick.cpp:1-239](file://src/ecu_joystick.cpp#L1-L239)
 - [src/ota_webserver.cpp:1-809](file://src/ota_webserver.cpp#L1-L809)
 - [src/web_state.cpp:1-20](file://src/web_state.cpp#L1-L20)
-- [lib/ForwarderCAN/ForwarderCAN.h:1-135](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L135)
-- [lib/ForwarderConfig/ForwarderConfig.h:1-92](file://lib/ForwarderConfig/ForwarderConfig.h#L1-L92)
+- [lib/ForwarderCAN/ForwarderCAN.h:1-137](file://lib/ForwarderCAN/ForwarderCAN.h#L1-L137)
+- [lib/ForwarderConfig/ForwarderConfig.h:1-100](file://lib/ForwarderConfig/ForwarderConfig.h#L1-L100)
 
 **Section sources**
 - [src/main.cpp:6-17](file://src/main.cpp#L6-L17)
@@ -485,6 +498,7 @@ Legacy_Board --> J1
 
 ## Performance Considerations
 - CAN bitrate and priority defaults balance responsiveness and bus efficiency.
+- **Enhanced Safety Timeout**: All environments now use a 200ms safety timeout for solenoid outputs, improving system reliability and preventing stale actuator states.
 - Watchdog and safety timeouts prevent stale actuator states.
 - OTA update progress reporting and mDNS availability improve operational reliability.
 - Using cached PlatformIO installations reduces CI runtime overhead.
@@ -492,6 +506,7 @@ Legacy_Board --> J1
 - **Dual PCA9685**: Enables 16-channel PWM output for expanded hardware capabilities.
 - **I2C Locking Disabled**: Improves I2C performance for multiple PCA9685 controllers.
 - **Enhanced Upload Speed**: ESP32-S3 UART-only environment now uses 460800 baud upload speed, significantly reducing firmware flashing times during development compared to the previous 115200 baud rate.
+- **Soft Reset Uploads**: ESP32-S3 variants use soft reset upload flags to improve OTA update reliability and reduce upload failures.
 
 ## Troubleshooting Guide
 Common build issues and resolutions:
@@ -510,29 +525,35 @@ Common build issues and resolutions:
 - **Upload Speed Issues**:
   - Symptom: Slow firmware flashing or upload failures
   - Fix: Use motor_driver_s3_uart environment for 460800 baud upload speed; ensure serial port settings match the selected environment
-- Incorrect board selection:
+- **OTA Upload Failures**:
+  - Symptom: Upload endpoint returns an error or OTA fails mid-transfer
+  - Fix: Use ESP32-S3 variants with soft reset upload flags; ensure stable power supply during OTA; verify AP connectivity and mDNS resolution
+- **Safety Timeout Issues**:
+  - Symptom: Solenoids shutting off unexpectedly or delayed response
+  - Fix: All environments now use 200ms safety timeout; ensure CAN bus communication is active; check for bus errors or address conflicts
+- **Incorrect Board Selection**:
   - Symptom: Pin conflicts or missing pins
   - Fix: Ensure the environment's board matches your hardware; ESP32-S3 variants use different boards than legacy ESP32
-- OTA web server not appearing:
+- **OTA Web Server Not Appearing**:
   - Symptom: No AP or web UI
   - Fix: Build with an OTA environment (ending in _ota) or define ENABLE_OTA_WEBSERVER in the base environment
-- CAN initialization failure:
+- **CAN Initialization Failure**:
   - Symptom: Red blinking LED or loop stalls during CAN init
   - Fix: Verify TX/RX pins and SE pin (for joysticks), and ensure the board supports the chosen pins
-- OTA update failures:
+- **OTA Update Failures**:
   - Symptom: Upload endpoint returns an error
   - Fix: Confirm the uploaded file is a valid firmware binary produced by the build; verify AP connectivity and mDNS resolution
 
-**Updated** Added troubleshooting guidance for enhanced upload speed configuration and upload speed-related issues
+**Updated** Added troubleshooting guidance for enhanced upload speed configuration, soft reset uploads, and safety timeout considerations
 
 **Section sources**
 - [src/main.cpp:15-17](file://src/main.cpp#L15-L17)
-- [platformio.ini:18-142](file://platformio.ini#L18-L142)
+- [platformio.ini:18-148](file://platformio.ini#L18-L148)
 - [src/ota_webserver.cpp:705-733](file://src/ota_webserver.cpp#L705-L733)
 - [README.md:147-166](file://README.md#L147-L166)
 
 ## Conclusion
-The ForwarderKE build system leverages PlatformIO environments to cleanly separate ECU roles and deployment modes across both legacy ESP32 and new ESP32-S3 targets. Build flags determine the ECU type, hardware pin assignments, and board-specific configurations, while shared libraries encapsulate protocol and persistence concerns. The CI pipeline automates builds and releases across all eight environments, and OTA environments streamline field updates. The new ESP32-S3 variants provide enhanced USB-CDC support and flexible UART configurations, while dual PCA9685 I2C addressing expands hardware capabilities. The recent enhancement of upload speed from 115200 to 460800 baud for the ESP32-S3 UART-only environment significantly improves development workflow efficiency. Following the documented environments and troubleshooting steps ensures reliable builds and deployments across motor driver and joystick ECUs.
+The ForwarderKE build system leverages PlatformIO environments to cleanly separate ECU roles and deployment modes across both legacy ESP32 and new ESP32-S3 targets. Build flags determine the ECU type, hardware pin assignments, and board-specific configurations, while shared libraries encapsulate protocol and persistence concerns. The CI pipeline automates builds and releases across all eight environments, and OTA environments streamline field updates. The new ESP32-S3 variants provide enhanced USB-CDC support and flexible UART configurations, while dual PCA9685 I2C addressing expands hardware capabilities. The recent enhancements of increasing safety timeout from 80ms to 200ms across all environments significantly improves system reliability, and adding soft reset upload flags for ESP32-S3 boards enhances OTA update reliability. The improved upload speed from 115200 to 460800 baud for the ESP32-S3 UART-only environment significantly improves development workflow efficiency. Following the documented environments and troubleshooting steps ensures reliable builds and deployments across motor driver and joystick ECUs.
 
 ## Appendices
 
@@ -567,25 +588,27 @@ The ForwarderKE build system leverages PlatformIO environments to cleanly separa
   - `CONFIG_I2CDEV_NOLOCK`: disable I2C locking for performance
   - `PCA9685_I2C_ADDR1`, `PCA9685_I2C_ADDR2`: dual PCA9685 I2C addresses (0x40, 0x41)
   - `upload_speed`: 460800 baud for UART-only variants
+  - `upload_flags`: soft_reset for enhanced OTA reliability
 - `ENABLE_OTA_WEBSERVER`: enable embedded OTA web server
+- `SAFETY_TIMEOUT_MS`: safety timeout for solenoid outputs (200ms across all environments)
 
-**Updated** Added new ESP32-S3 environment variables and upload speed configuration
+**Updated** Added new ESP32-S3 environment variables, upload speed configuration, soft reset flags, and safety timeout details
 
 **Section sources**
-- [platformio.ini:17-142](file://platformio.ini#L17-L142)
+- [platformio.ini:17-148](file://platformio.ini#L17-L148)
 - [src/ecu_motor_driver.cpp:14-41](file://src/ecu_motor_driver.cpp#L14-L41)
 - [src/ecu_joystick.cpp:11-37](file://src/ecu_joystick.cpp#L11-L37)
 
 ### Board Configuration Matrix
-| Environment | Board Model | Flash Size | USB-CDC | UART-Only | Upload Speed | Purpose |
-|-------------|-------------|------------|---------|-----------|--------------|---------|
-| motor_driver_s3 | esp32s3box | 8MB | ✓ | ✗ | 115200 baud | ESP32-S3 with USB-CDC |
-| motor_driver_s3_uart | esp32-s3-devkitc-1 | 8MB | ✗ | ✓ | **460800 baud** | ESP32-S3 UART-only (enhanced speed) |
-| motor_driver | esp32dev | 4MB | ✗ | ✗ | 115200 baud | Legacy ESP32 |
-| joystick1 | esp32dev | 4MB | ✗ | ✗ | 115200 baud | Joystick ECU 1 |
-| joystick2 | esp32dev | 4MB | ✗ | ✗ | 115200 baud | Joystick ECU 2 |
+| Environment | Board Model | Flash Size | USB-CDC | UART-Only | Upload Speed | Soft Reset | Purpose |
+|-------------|-------------|------------|---------|-----------|--------------|------------|---------|
+| motor_driver_s3 | esp32s3box | 8MB | ✓ | ✗ | 115200 baud | ✗ | ESP32-S3 with USB-CDC |
+| motor_driver_s3_uart | esp32-s3-devkitc-1 | 8MB | ✗ | ✓ | **460800 baud** | **✓** | ESP32-S3 UART-only (enhanced speed & OTA reliability) |
+| motor_driver | esp32dev | 4MB | ✗ | ✗ | 115200 baud | ✗ | Legacy ESP32 |
+| joystick1 | esp32dev | 4MB | ✗ | ✗ | 115200 baud | ✗ | Joystick ECU 1 |
+| joystick2 | esp32dev | 4MB | ✗ | ✗ | 115200 baud | ✗ | Joystick ECU 2 |
 
-**Updated** Enhanced upload speed column to reflect 460800 baud for UART-only variants
+**Updated** Enhanced upload speed column to reflect 460800 baud for UART-only variants, added soft reset column for OTA reliability
 
 **Section sources**
-- [platformio.ini:18-142](file://platformio.ini#L18-L142)
+- [platformio.ini:18-148](file://platformio.ini#L18-L148)

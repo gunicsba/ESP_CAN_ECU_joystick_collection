@@ -17,11 +17,11 @@
 
 ## Update Summary
 **Changes Made**
-- Added documentation for the new button gate system with three operational modes
-- Documented the FLAG_AXIS_INVERT constant and inversion flag functionality
-- Updated PWM mapping algorithm to include button gate evaluation
-- Enhanced axis configuration documentation with new button gate options
-- Added practical examples for button gate configuration and inversion usage
+- Added documentation for the new PWM tracking mechanism with `setPWMTracked()` function for change detection
+- Documented the rate-limited motor output broadcasting via CAN bus (PF_MOTOR_OUTPUT1/2 messages)
+- Enhanced safety timeout documentation with caller identification in `allOff()` function
+- Updated logging capabilities documentation with PWM change detection and debugging
+- Added practical examples for the new PWM tracking features
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -36,7 +36,7 @@
 10. [Appendices](#appendices)
 
 ## Introduction
-This document describes the Motor Driver ECU implementation responsible for controlling solenoids via PCA9685 PWM drivers and managing CAN bus communications. It covers PCA9685 initialization and dual-controller support, the PWM mapping algorithm for converting joystick inputs to solenoid actuation signals (including bidirectional axes, deadband handling, and button gate control), the safety timeout mechanism, LED status indicators, heartbeat messages, address claiming, configuration persistence, and CAN message processing for joystick data, solenoid commands, and LED control. The system now includes advanced features like button-gated axis control with three operational modes and channel inversion for forward/reverse swapping. Practical examples and troubleshooting guidance are included for common issues such as solenoid sticking and communication failures.
+This document describes the Motor Driver ECU implementation responsible for controlling solenoids via PCA9685 PWM drivers and managing CAN bus communications. It covers PCA9685 initialization and dual-controller support, the PWM mapping algorithm for converting joystick inputs to solenoid actuation signals (including bidirectional axes, deadband handling, and button gate control), the enhanced safety timeout mechanism with caller identification, LED status indicators, heartbeat messages, address claiming, configuration persistence, and CAN message processing for joystick data, solenoid commands, and LED control. The system now includes advanced features like PWM change detection, rate-limited motor output broadcasting, and improved logging capabilities for enhanced monitoring and debugging.
 
 ## Project Structure
 The project is organized around an ESP32-S3-based firmware with separate ECUs for motor control and joystick input. The build system uses PlatformIO environments to configure hardware pins, addresses, and features per ECU type.
@@ -70,9 +70,11 @@ H["README.md<br/>Overview & pinout"] -.-> G
 
 ## Core Components
 - PCA9685 PWM controllers: Two PCA9685 chips (primary and optional secondary) drive up to 16 channels (8 per PCA9685). Initialization sets oscillator frequency and PWM frequency, with automatic detection of the second controller.
+- **Enhanced PWM tracking system**: New `setPWMTracked()` function provides change detection for PWM outputs, enabling efficient rate-limited broadcasting and improved monitoring capabilities.
 - Advanced joystick-to-solenoid mapping: Axis configuration defines source joystick address, pot index, output channel, deadbands, PWM range, button gate modes, and inversion flags. The mapping algorithm converts 10-bit joystick values to 12-bit PWM values with bidirectional support, deadband logic, and button gate evaluation.
-- Safety timeout: If no joystick or solenoid command is received within the configured timeout, all solenoids are turned off.
+- **Enhanced safety timeout**: Improved timeout mechanism with caller identification in `allOff()` function for better debugging and system state tracking.
 - LED status indicator: Single WS2812 LED indicates connection status, activity, identification mode, and custom colors.
+- **Rate-limited motor output broadcasting**: CAN bus messages (PF_MOTOR_OUTPUT1/2) broadcast motor output values at 20Hz maximum rate when PWM changes are detected.
 - Heartbeat messages: Periodic broadcast of system health metrics and CAN statistics.
 - Address claiming and configuration persistence: J1939-style address claiming, persistent storage of forced address and axis configurations, and CAN output rules.
 
@@ -82,11 +84,13 @@ H["README.md<br/>Overview & pinout"] -.-> G
 - [ecu_motor_driver.cpp:332-337](file://src/ecu_motor_driver.cpp#L332-L337)
 - [ecu_motor_driver.cpp:153-182](file://src/ecu_motor_driver.cpp#L153-L182)
 - [ecu_motor_driver.cpp:277-288](file://src/ecu_motor_driver.cpp#L277-L288)
+- [ecu_motor_driver.cpp:82-99](file://src/ecu_motor_driver.cpp#L82-L99)
+- [ecu_motor_driver.cpp:552-577](file://src/ecu_motor_driver.cpp#L552-L577)
 - [ForwarderCAN.h:66-120](file://lib/ForwarderCAN/ForwarderCAN.h#L66-L120)
 - [ForwarderConfig.h:64-92](file://lib/ForwarderConfig/ForwarderConfig.h#L64-L92)
 
 ## Architecture Overview
-The Motor Driver ECU integrates CAN communication, configuration management, PCA9685 PWM control, and status reporting. It receives joystick data and solenoid commands over CAN, applies mapping rules with button gate evaluation, drives solenoids, and periodically reports health metrics.
+The Motor Driver ECU integrates CAN communication, configuration management, PCA9685 PWM control, and status reporting. It receives joystick data and solenoid commands over CAN, applies mapping rules with button gate evaluation, drives solenoids with change detection, and periodically reports health metrics and motor outputs.
 
 ```mermaid
 graph TB
@@ -98,6 +102,8 @@ CFG["ForwarderConfig<br/>NVS persistence"]
 CAN["ForwarderCAN<br/>J1939-like framing"]
 OUT["can_output.cpp<br/>GPIO rules"]
 BG["Button Gate System<br/>BTN1 control"]
+PWM["PWM Tracking<br/>setPWMTracked()"]
+MOT["Motor Output<br/>PF_MOTOR_OUTPUT1/2"]
 END
 JS["Joystick ECUs<br/>ecu_joystick.cpp"] --> CAN
 CAN --> M
@@ -106,6 +112,8 @@ M --> LED
 M --> CFG
 M --> OUT
 M --> BG
+M --> PWM
+M --> MOT
 ```
 
 **Diagram sources**
@@ -113,12 +121,75 @@ M --> BG
 - [ecu_motor_driver.cpp:85-99](file://src/ecu_motor_driver.cpp#L85-L99)
 - [ecu_motor_driver.cpp:153-182](file://src/ecu_motor_driver.cpp#L153-L182)
 - [ecu_motor_driver.cpp:277-288](file://src/ecu_motor_driver.cpp#L277-L288)
+- [ecu_motor_driver.cpp:82-99](file://src/ecu_motor_driver.cpp#L82-L99)
+- [ecu_motor_driver.cpp:552-577](file://src/ecu_motor_driver.cpp#L552-L577)
 - [ForwarderConfig.h:64-92](file://lib/ForwarderConfig/ForwarderConfig.h#L64-L92)
 - [ForwarderCAN.h:66-120](file://lib/ForwarderCAN/ForwarderCAN.h#L66-L120)
 - [can_output.cpp:7-19](file://src/can_output.cpp#L7-L19)
 - [ecu_joystick.cpp:159-192](file://src/ecu_joystick.cpp#L159-L192)
 
 ## Detailed Component Analysis
+
+### Enhanced PWM Tracking Mechanism
+The new PWM tracking system provides efficient change detection and monitoring capabilities:
+
+- **Change Detection**: `setPWMTracked()` compares new PWM values with previously written values to detect changes.
+- **Dirty Flag Management**: When a change is detected, `g_outputDirty` is set to trigger rate-limited broadcasting.
+- **Debug Logging**: Periodic PWM change logging helps monitor active channels and troubleshoot issues.
+- **Caller Identification**: The `allOff()` function now accepts a caller parameter for better debugging.
+
+```mermaid
+sequenceDiagram
+participant MD as "Motor Driver"
+participant PWM as "setPWMTracked"
+participant PCA as "PCA9685"
+participant CAN as "CAN Bus"
+MD->>PWM : "setPWMTracked(channel, value)"
+PWM->>PWM : "Compare with lastPWM[channel]"
+alt "Value changed"
+PWM->>MD : "g_outputDirty = true"
+PWM->>PCA : "setPWM(channel, value)"
+PWM->>MD : "Debug log (if 2s elapsed)"
+else "Value unchanged"
+PWM->>PCA : "setPWM(channel, value)"
+end
+MD->>CAN : "Broadcast PF_MOTOR_OUTPUT1/2 (rate-limited)"
+```
+
+**Diagram sources**
+- [ecu_motor_driver.cpp:82-99](file://src/ecu_motor_driver.cpp#L82-L99)
+- [ecu_motor_driver.cpp:552-577](file://src/ecu_motor_driver.cpp#L552-L577)
+
+**Section sources**
+- [ecu_motor_driver.cpp:82-99](file://src/ecu_motor_driver.cpp#L82-L99)
+- [ecu_motor_driver.cpp:101-107](file://src/ecu_motor_driver.cpp#L101-L107)
+- [ecu_motor_driver.cpp:552-577](file://src/ecu_motor_driver.cpp#L552-L577)
+
+### Rate-Limited Motor Output Broadcasting
+The system now broadcasts motor output values via dedicated CAN messages when PWM changes are detected:
+
+- **PF_MOTOR_OUTPUT1**: Broadcasts axes 0-3 (channels 0-7) with differential values (forward - reverse)
+- **PF_MOTOR_OUTPUT2**: Broadcasts axes 4-7 (channels 8-15) with differential values (forward - reverse)
+- **Rate Limiting**: Broadcast occurs at maximum 20Hz (50ms interval) to prevent bus congestion
+- **Change Detection**: Only broadcasts when `g_outputDirty` is true, reducing unnecessary traffic
+
+```mermaid
+flowchart TD
+Start["PWM Change Detected"] --> CheckDirty{"g_outputDirty == true?"}
+CheckDirty --> |No| End["No Broadcast"]
+CheckDirty --> |Yes| CheckRate{"50ms elapsed?"}
+CheckRate --> |No| Wait["Wait for 50ms"]
+CheckRate --> |Yes| Broadcast["Broadcast PF_MOTOR_OUTPUT1/2"]
+Broadcast --> Reset["g_outputDirty = false"]
+Reset --> End
+```
+
+**Diagram sources**
+- [ecu_motor_driver.cpp:552-577](file://src/ecu_motor_driver.cpp#L552-L577)
+
+**Section sources**
+- [ecu_motor_driver.cpp:552-577](file://src/ecu_motor_driver.cpp#L552-L577)
+- [ForwarderCAN.h:50-52](file://lib/ForwarderCAN/ForwarderCAN.h#L50-L52)
 
 ### PCA9685 Initialization and Dual-Controller Support
 - I2C pins are configured and Wire is initialized.
@@ -236,22 +307,30 @@ The FLAG_AXIS_INVERT constant enables channel inversion for axes that need diffe
 - [ecu_motor_driver.cpp:142-147](file://src/ecu_motor_driver.cpp#L142-L147)
 - [ForwarderConfig.h:27](file://lib/ForwarderConfig/ForwarderConfig.h#L27)
 
-### Safety Timeout Mechanism
-If no joystick or solenoid command is received within the safety timeout, the system turns off all solenoids and resets the update timer.
+### Enhanced Safety Timeout Mechanism
+The safety timeout system now includes caller identification for better debugging:
+
+- **Enhanced Caller Identification**: The `allOff()` function accepts a caller parameter to identify the source of shutdown events.
+- **Improved Debugging**: Serial output now shows which function triggered the safety shutdown.
+- **Preventive Measures**: If no joystick or solenoid command is received within the safety timeout, all solenoids are turned off and the update timer is reset.
 
 ```mermaid
 flowchart TD
 Loop["ecu_loop()"] --> CheckTimeout{"lastSolenoidUpdate + SAFETY_TIMEOUT_MS<br/>exceeded?"}
-CheckTimeout --> |Yes| AllOff["allOff(): set all PWMs to 0"]
+CheckTimeout --> |Yes| Caller["allOff(\"safety\") with caller identification"]
 CheckTimeout --> |No| Continue["Continue normal operation"]
+Caller --> Log["Serial printf with caller name"]
+Log --> AllOff["Turn off all PWM channels"]
 AllOff --> Reset["Reset lastSolenoidUpdate"]
 ```
 
 **Diagram sources**
 - [ecu_motor_driver.cpp:332-337](file://src/ecu_motor_driver.cpp#L332-L337)
+- [ecu_motor_driver.cpp:101-107](file://src/ecu_motor_driver.cpp#L101-L107)
 
 **Section sources**
 - [ecu_motor_driver.cpp:332-337](file://src/ecu_motor_driver.cpp#L332-L337)
+- [ecu_motor_driver.cpp:101-107](file://src/ecu_motor_driver.cpp#L101-L107)
 - [platformio.ini:29](file://platformio.ini#L29)
 
 ### LED Status Indicator System
@@ -340,7 +419,7 @@ MD->>MD : "processCAN() : switch(pf)"
 alt "Joystick pots"
 MD->>MD : "update g_joyPots[], lastSolenoidUpdate"
 else "Solenoid command"
-MD->>MD : "map 0..255 to 0..4095, setPWM()"
+MD->>MD : "map 0..255 to 0..4095, setPWMTracked()"
 else "LED color"
 MD->>MD : "set ledR/G/B"
 else "Identify"
@@ -363,6 +442,15 @@ end
 - [can_output.cpp:29-49](file://src/can_output.cpp#L29-L49)
 
 ### Practical Examples
+
+#### PWM Tracking and Logging Configuration
+- **Change Detection**: The system automatically tracks PWM changes and sets `g_outputDirty` when values differ from previous writes.
+- **Debug Logging**: PWM changes are logged every 2 seconds with active channel information for monitoring.
+- **Rate Limiting**: Motor output broadcasting occurs at maximum 20Hz (50ms interval) to prevent bus congestion.
+
+**Section sources**
+- [ecu_motor_driver.cpp:82-99](file://src/ecu_motor_driver.cpp#L82-L99)
+- [ecu_motor_driver.cpp:552-577](file://src/ecu_motor_driver.cpp#L552-L577)
 
 #### Axis Configuration Example with Button Gates
 - Source address: joystick SA (e.g., 0x21)
@@ -387,22 +475,25 @@ These are stored persistently and applied during mapping.
 - [platformio.ini:13](file://platformio.ini#L13)
 
 #### Troubleshooting Procedures
-- Solenoid sticking:
+- **Solenoid sticking**:
   - Verify safety timeout is not triggering by ensuring joystick or solenoid commands are received regularly.
   - Confirm mapping deadband settings are appropriate for the joystick range.
   - **New**: Check button gate settings if axes are unexpectedly inactive.
-- Communication failures:
+  - **New**: Monitor PWM change logs to identify stuck channels.
+- **Communication failures**:
   - Check CAN bus wiring and termination.
   - Confirm address claiming succeeded and the device is online.
   - Inspect heartbeat messages and RX/TX counters for anomalies.
-- LED diagnostics:
+  - **New**: Verify rate-limited motor output broadcasting is functioning.
+- **LED diagnostics**:
   - Blinking red indicates offline state.
   - Fast blinking indicates recent activity.
   - Identification mode toggles white periodically.
-- **New**: Button gate troubleshooting:
-  - Verify joystick button connections and debouncing.
-  - Check that button state is being transmitted correctly.
-  - Test different button gate modes to isolate issues.
+- **New**: PWM tracking troubleshooting:
+  - Verify `g_outputDirty` flag is being set on changes.
+  - Check rate-limiting intervals (50ms minimum between broadcasts).
+  - Monitor serial logs for PWM change detection messages.
+  - **New**: Use caller identification in `allOff()` function for debugging shutdown events.
 
 **Section sources**
 - [ecu_motor_driver.cpp:332-337](file://src/ecu_motor_driver.cpp#L332-L337)
@@ -440,23 +531,31 @@ JS --> PIO
 - PWM frequency and oscillator settings are fixed at initialization; adjust via build flags if needed.
 - CAN message processing is event-driven; keep payload sizes minimal to reduce overhead.
 - LED updates are throttled to ~20 Hz to avoid excessive CPU usage.
-- Safety timeout prevents indefinite actuation; tune timeout based on application needs.
-- **New**: Button gate evaluation adds minimal computational overhead but provides critical safety and control features.
+- **Enhanced**: Safety timeout prevents indefinite actuation; tune timeout based on application needs.
+- **New**: PWM tracking reduces unnecessary CAN traffic by only broadcasting when values change.
+- **New**: Rate-limited motor output broadcasting (20Hz maximum) prevents bus congestion.
+- **New**: Change detection logging provides visibility into system operation without excessive bandwidth usage.
 
 ## Troubleshooting Guide
-- CAN initialization failure:
+- **CAN initialization failure**:
   - The device blinks a red pattern and loops until fixed. Verify wiring and transceiver enable pin if applicable.
-- Address conflicts:
+- **Address conflicts**:
   - Address claiming state machine handles arbitration; check logs for claiming attempts and state transitions.
-- Stuck solenoids:
+- **Stuck solenoids**:
   - Ensure joystick commands are being received; otherwise, the safety timeout will turn them off.
   - **New**: Check if button gates are preventing activation.
-- LED not responding:
+  - **New**: Verify PWM tracking is detecting changes and setting `g_outputDirty`.
+- **LED not responding**:
   - Confirm WS2812 pin configuration matches hardware and that the device is powered.
-- **New**: Button gate issues:
-  - Verify joystick button wiring and pull-up resistors.
-  - Check button debounce timing and state transmission.
-  - Test with different button gate modes to isolate problems.
+- **New**: PWM tracking issues:
+  - Verify `setPWMTracked()` is being called instead of direct `setPWM()`.
+  - Check that `lastPWM` array is properly initialized to 0.
+  - Monitor serial logs for PWM change detection messages.
+  - **New**: Use caller identification in `allOff()` function to trace shutdown sources.
+- **New**: Rate-limited broadcasting problems:
+  - Verify `g_outputDirty` flag is being set on PWM changes.
+  - Check that 50ms minimum interval is being enforced.
+  - Monitor PF_MOTOR_OUTPUT1/2 message rates on the bus.
 
 **Section sources**
 - [ecu_motor_driver.cpp:306-316](file://src/ecu_motor_driver.cpp#L306-L316)
@@ -465,7 +564,7 @@ JS --> PIO
 - [platformio.ini:25](file://platformio.ini#L25)
 
 ## Conclusion
-The Motor Driver ECU provides a robust, configurable solution for solenoid control via PCA9685 PWM drivers, integrated with a J1939-like CAN protocol. Its features include bidirectional axis mapping with deadband handling, automatic safety shutoff, status LEDs, periodic heartbeats, address claiming, and persistent configuration. The recent enhancements include a sophisticated button gate system with three operational modes and channel inversion capabilities, providing enhanced safety, flexibility, and control precision for complex applications.
+The Motor Driver ECU provides a robust, configurable solution for solenoid control via PCA9685 PWM drivers, integrated with a J1939-like CAN protocol. Its features include bidirectional axis mapping with deadband handling, automatic safety shutoff, status LEDs, periodic heartbeats, address claiming, and persistent configuration. The recent enhancements include a sophisticated PWM tracking system with change detection, rate-limited motor output broadcasting for efficient CAN bus utilization, enhanced safety timeout with caller identification for better debugging, and improved logging capabilities for system monitoring and troubleshooting.
 
 ## Appendices
 
@@ -479,10 +578,13 @@ The Motor Driver ECU provides a robust, configurable solution for solenoid contr
 - Request config: PF 0x25, addressed to target ECU.
 - Config response: PF 0x26, broadcast from target ECU.
 - Heartbeat: PF 0x30, broadcast.
+- **New**: Motor output 1: PF 0x31, broadcast with axes 0-3 differential values.
+- **New**: Motor output 2: PF 0x32, broadcast with axes 4-7 differential values.
 
 **Section sources**
 - [README.md:29-42](file://README.md#L29-L42)
 - [ForwarderCAN.h:38-50](file://lib/ForwarderCAN/ForwarderCAN.h#L38-L50)
+- [ForwarderCAN.h:50-52](file://lib/ForwarderCAN/ForwarderCAN.h#L50-L52)
 
 ### Axis Configuration Flags Reference
 - **FLAG_AXIS_ENABLED (0x01)**: Enables axis mapping and control
@@ -499,3 +601,14 @@ The Motor Driver ECU provides a robust, configurable solution for solenoid contr
 
 **Section sources**
 - [ForwarderConfig.h:20-23](file://lib/ForwarderConfig/ForwarderConfig.h#L20-L23)
+
+### PWM Tracking and Broadcasting Reference
+- **setPWMTracked()**: Enhanced PWM function with change detection and logging
+- **g_outputDirty**: Flag indicating PWM changes requiring broadcast
+- **Rate Limit**: 20Hz maximum for PF_MOTOR_OUTPUT1/2 broadcasts
+- **Caller Identification**: Enhanced `allOff()` function accepts caller parameter for debugging
+
+**Section sources**
+- [ecu_motor_driver.cpp:82-99](file://src/ecu_motor_driver.cpp#L82-L99)
+- [ecu_motor_driver.cpp:552-577](file://src/ecu_motor_driver.cpp#L552-L577)
+- [ecu_motor_driver.cpp:101-107](file://src/ecu_motor_driver.cpp#L101-L107)

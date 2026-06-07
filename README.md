@@ -123,6 +123,39 @@ Byte 6-7: reserved (0)
 | Button 1 | 12 | Active low, internal pullup |
 | Button 2 | 5 | Active low, internal pullup |
 
+## Joystick ECU LED Status Indicators
+
+The WS2812B RGB LED on the joystick ECU provides visual status feedback:
+
+| LED Pattern | Meaning | Condition |
+|-------------|---------|----------|
+| **Solid GREEN** (full brightness) | Normal operation | CAN bus online, motor ECU responding |
+| **Solid RED** | Motor ECU offline | No CAN messages from motor ECU (`0x20`) for 1+ second |
+| **Blinking RED** (500ms) | CAN bus broken | No CAN messages from other devices for 2+ seconds |
+| **Flashing WHITE** | Identify mode | `PF_IDENTIFY` message received, lasts 3 seconds |
+| **Custom RGB** | Remote command | `PF_LED_COLOR` message overrides default color |
+
+### Detection Logic
+
+**Priority order** (highest to lowest):
+1. Identify (white flash, 3 seconds)
+2. CAN bus broken (blinking red) — message timeout + TWAI hardware check
+3. Motor ECU offline (solid red) — message timeout
+4. Custom LED color from `PF_LED_COLOR` command
+5. Default green (0, 255, 0)
+
+**CAN Bus Broken** is detected when any of:
+- No CAN messages from **other devices** for 2+ seconds (own messages filtered to avoid loopback false negatives in `TWAI_MODE_NO_ACK`)
+- `TWAI_STATE_STOPPED` — TWAI driver stopped
+- `TWAI_STATE_BUS_OFF` — Bus-off due to errors
+- `tx_error_counter >= 127` — High transmit error count
+
+> **Note:** In `TWAI_MODE_NO_ACK`, the ESP32 may receive its own transmitted messages (loopback). The detection filters these out by checking `sa != g_can->getAddress()` so that a disconnected CAN cable is properly detected.
+
+**Motor ECU Offline** is detected when:
+- No CAN messages received from source address `0x20` for more than 1 second
+- Only triggers if CAN bus is NOT broken (bus check has priority)
+
 ## Building & Flashing
 
 Install [PlatformIO](https://platformio.org/) (VS Code extension or CLI).
