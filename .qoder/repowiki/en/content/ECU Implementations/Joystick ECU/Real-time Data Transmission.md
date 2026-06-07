@@ -14,11 +14,10 @@
 
 ## Update Summary
 **Changes Made**
-- Enhanced CAN communication system documentation to reflect comprehensive ring buffer implementation
-- Updated data buffering mechanisms section to detail the 32-message circular buffer
-- Revised fault tolerance mechanisms to include ring buffer overflow handling
-- Added new section on ring buffer management and application-level consumption
-- Updated timing analysis to account for ring buffer processing overhead
+- Updated loop() method implementation details to reflect the bug fix that eliminates feedback loop
+- Revised data buffering mechanisms section to clarify the direct TWAI hardware access pattern
+- Updated timing analysis to account for the improved message processing flow
+- Enhanced fault tolerance mechanisms documentation to include the feedback loop prevention
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -55,7 +54,7 @@ F --> G["README.md<br/>Protocol & pinouts"]
 
 **Diagram sources**
 - [main.cpp:1-39](file://src/main.cpp#L1-L39)
-- [ecu_joystick.cpp:1-281](file://src/ecu_joystick.cpp#L1-L281)
+- [ecu_joystick.cpp:1-276](file://src/ecu_joystick.cpp#L1-L276)
 - [ForwarderCAN.h:123-134](file://lib/ForwarderCAN/ForwarderCAN.h#L123-L134)
 - [ForwarderCAN.cpp:107-179](file://lib/ForwarderCAN/ForwarderCAN.cpp#L107-L179)
 - [ForwarderConfig.h:1-92](file://lib/ForwarderConfig/ForwarderConfig.h#L1-L92)
@@ -81,7 +80,7 @@ Key timing and constraints:
 - Ring buffer provides 32-message capacity for non-network-management messages.
 
 **Section sources**
-- [ecu_joystick.cpp:227-278](file://src/ecu_joystick.cpp#L227-L278)
+- [ecu_joystick.cpp:227-276](file://src/ecu_joystick.cpp#L227-L276)
 - [ForwarderCAN.cpp:29-80](file://lib/ForwarderCAN/ForwarderCAN.cpp#L29-L80)
 - [ForwarderCAN.h:123-134](file://lib/ForwarderCAN/ForwarderCAN.h#L123-L134)
 - [ForwarderConfig.h:70-78](file://lib/ForwarderConfig/ForwarderConfig.h#L70-L78)
@@ -127,7 +126,7 @@ Bus-->>CAN : "RX frames"
 ```
 
 **Diagram sources**
-- [ecu_joystick.cpp:227-278](file://src/ecu_joystick.cpp#L227-L278)
+- [ecu_joystick.cpp:227-276](file://src/ecu_joystick.cpp#L227-L276)
 - [ForwarderCAN.cpp:107-179](file://lib/ForwarderCAN/ForwarderCAN.cpp#L107-L179)
 - [ForwarderCAN.h:123-134](file://lib/ForwarderCAN/ForwarderCAN.h#L123-L134)
 
@@ -172,12 +171,12 @@ RingBufProcess --> End(["Loop Exit"])
 ```
 
 **Diagram sources**
-- [ecu_joystick.cpp:227-278](file://src/ecu_joystick.cpp#L227-L278)
+- [ecu_joystick.cpp:227-276](file://src/ecu_joystick.cpp#L227-L276)
 
 **Section sources**
 - [ecu_joystick.cpp:74-87](file://src/ecu_joystick.cpp#L74-L87)
-- [ecu_joystick.cpp:238-252](file://src/ecu_joystick.cpp#L238-L252)
-- [ecu_joystick.cpp:254-278](file://src/ecu_joystick.cpp#L254-L278)
+- [ecu_joystick.cpp:235-247](file://src/ecu_joystick.cpp#L235-L247)
+- [ecu_joystick.cpp:248-276](file://src/ecu_joystick.cpp#L248-L276)
 
 ### Interrupt-Driven Data Collection, Priority Scheduling, and Context Switching
 - The joystick loop is a polling-based design without external interrupts for input capture. This simplifies determinism and avoids ISR overhead.
@@ -195,14 +194,14 @@ Practical implications:
 - Ring buffer provides bounded memory usage with overflow protection.
 
 **Section sources**
-- [ecu_joystick.cpp:227-278](file://src/ecu_joystick.cpp#L227-L278)
+- [ecu_joystick.cpp:227-276](file://src/ecu_joystick.cpp#L227-L276)
 - [ForwarderCAN.cpp:107-179](file://lib/ForwarderCAN/ForwarderCAN.cpp#L107-L179)
 - [ForwarderCAN.cpp:4-17](file://lib/ForwarderCAN/ForwarderCAN.cpp#L4-L17)
 
 ### Enhanced Data Buffering Mechanisms and Memory Management
-**Updated** Enhanced with comprehensive ring buffer implementation
+**Updated** Enhanced with comprehensive ring buffer implementation and feedback loop prevention
 
-The CAN driver now features a sophisticated buffering system:
+The CAN driver now features a sophisticated buffering system with improved message processing flow:
 - TWAI queues:
   - TX queue length: 16 messages
   - RX queue length: 32 messages
@@ -210,8 +209,11 @@ The CAN driver now features a sophisticated buffering system:
   - 32-message circular buffer for non-network-management messages
   - Atomic push/pop operations with overflow protection
   - Preserves application-level messages for consumption
+- **Bug Fix**: The loop() method now uses direct TWAI hardware access to prevent feedback loops
 - ForwarderCAN enforces payload length ≤ 8 bytes per frame.
 - The joystick controller constructs small payloads (1–2 bytes for joystick data, 8 bytes for heartbeat) and relies on the driver's enhanced queueing.
+
+**Feedback Loop Prevention**: The loop() method uses direct `twai_receive()` calls instead of `receive()` to avoid recursive processing where the same frames would be re-processed through the ring buffer.
 
 Memory management:
 - Static globals for input state and timing.
@@ -223,6 +225,7 @@ Operational notes:
 - Exceeding TX queue capacity can cause transmit failures; the driver increments error counters.
 - RX backlog is handled by draining the receive queue and ring buffer in each loop iteration.
 - Ring buffer overflow drops oldest messages to maintain system stability.
+- Direct TWAI access prevents message duplication and improves processing efficiency.
 
 **Section sources**
 - [ForwarderCAN.cpp:29-80](file://lib/ForwarderCAN/ForwarderCAN.cpp#L29-L80)
@@ -244,13 +247,13 @@ Bandwidth considerations:
 - Typical traffic pattern: sporadic joystick frames plus periodic heartbeat plus queued application messages.
 
 **Section sources**
-- [ecu_joystick.cpp:238-252](file://src/ecu_joystick.cpp#L238-L252)
+- [ecu_joystick.cpp:235-247](file://src/ecu_joystick.cpp#L235-L247)
 - [ForwarderCAN.h:38-51](file://lib/ForwarderCAN/ForwarderCAN.h#L38-L51)
 - [platformio.ini:13](file://platformio.ini#L13)
 - [ForwarderCAN.h:123-134](file://lib/ForwarderCAN/ForwarderCAN.h#L123-L134)
 
 ### Enhanced Fault Tolerance, Data Integrity, and Error Recovery
-**Updated** Enhanced with ring buffer overflow handling
+**Updated** Enhanced with ring buffer overflow handling and feedback loop prevention
 
 - Address claiming: J1939-style arbitration prevents address conflicts; the driver retries or selects an alternate address based on device name.
 - Bus-off recovery: automatic recovery when the TWAI state indicates bus-off.
@@ -258,6 +261,7 @@ Bandwidth considerations:
 - Error counters: TX and RX counters and error counts are exposed for diagnostics.
 - Ring buffer overflow protection: oldest messages are dropped when buffer is full.
 - Message processing limits: prevents lockup under heavy bus load.
+- **Bug Fix**: Feedback loop elimination prevents infinite processing of the same frames.
 
 ```mermaid
 stateDiagram-v2
@@ -278,7 +282,7 @@ Recovering --> Claimed : "Recovery successful"
 
 **Section sources**
 - [ForwarderCAN.cpp:181-202](file://lib/ForwarderCAN/ForwarderCAN.cpp#L181-L202)
-- [ecu_joystick.cpp:254-278](file://src/ecu_joystick.cpp#L254-L278)
+- [ecu_joystick.cpp:248-276](file://src/ecu_joystick.cpp#L248-L276)
 - [ForwarderCAN.cpp:161-179](file://lib/ForwarderCAN/ForwarderCAN.cpp#L161-L179)
 
 ### Ring Buffer Management and Application-Level Consumption
@@ -305,6 +309,8 @@ The enhanced CAN driver includes a 32-message circular buffer that preserves non
 - Full/empty state management with bounds checking
 - Thread-safe operations suitable for real-time processing
 
+**Feedback Loop Prevention**: The loop() method uses direct TWAI hardware access to avoid recursive processing where the same frames would be re-processed through the ring buffer.
+
 **Section sources**
 - [ForwarderCAN.h:123-134](file://lib/ForwarderCAN/ForwarderCAN.h#L123-L134)
 - [ForwarderCAN.cpp:4-17](file://lib/ForwarderCAN/ForwarderCAN.cpp#L4-L17)
@@ -314,7 +320,7 @@ The enhanced CAN driver includes a 32-message circular buffer that preserves non
 ### Practical Examples
 
 #### Enhanced Timing Analysis Example
-**Updated** Incorporating ring buffer overhead
+**Updated** Incorporating ring buffer overhead and feedback loop prevention
 
 - Sample and send cycle:
   - Read inputs: minimal duration
@@ -328,27 +334,31 @@ The enhanced CAN driver includes a 32-message circular buffer that preserves non
   - TWAI receive loop draining RX queue and ring buffer
   - Message processing with ring buffer operations
   - LED update and optional OTA loop (when enabled)
+- **Bug Fix Impact**: Direct TWAI access eliminates feedback loop overhead and prevents duplicate frame processing
 
 Validation steps:
 - Measure loop execution time using the heartbeat diagnostics and TWAI status prints.
 - Monitor ring buffer occupancy to ensure it stays within safe limits.
 - Adjust fallback interval or thresholds to meet latency targets.
 - Track ring buffer overflow events to prevent message loss.
+- Verify that message processing doesn't get stuck in feedback loops.
 
 **Section sources**
-- [ecu_joystick.cpp:227-278](file://src/ecu_joystick.cpp#L227-L278)
+- [ecu_joystick.cpp:227-276](file://src/ecu_joystick.cpp#L227-L276)
 - [ForwarderCAN.cpp:161-179](file://lib/ForwarderCAN/ForwarderCAN.cpp#L161-L179)
 - [README.md:105-111](file://README.md#L105-L111)
 
 #### Enhanced Buffer Management Example
-**Updated** Including ring buffer considerations
+**Updated** Including ring buffer considerations and feedback loop prevention
 
 - TX queue size: 16
 - RX queue size: 32
 - Ring buffer capacity: 32 messages
+- **Bug Fix**: Direct TWAI access prevents feedback loops where the same frames are re-processed
 - If TX fails, error counters increment; investigate TX queue saturation or bus-off conditions.
 - Drain RX queue and ring buffer promptly to avoid overflow.
 - Monitor ring buffer occupancy to prevent overflow during heavy message loads.
+- Verify that receive() method works correctly for application-level consumption.
 
 **Section sources**
 - [ForwarderCAN.cpp:29-80](file://lib/ForwarderCAN/ForwarderCAN.cpp#L29-L80)
@@ -356,18 +366,20 @@ Validation steps:
 - [ForwarderCAN.h:123-134](file://lib/ForwarderCAN/ForwarderCAN.h#L123-L134)
 
 #### Enhanced Performance Monitoring Example
-**Updated** Adding ring buffer metrics
+**Updated** Adding ring buffer metrics and feedback loop indicators
 
 - Use heartbeat and TWAI status prints to monitor:
   - TX/RX counters
   - Error counters
   - Bus state and messages pending TX/RX
   - Ring buffer occupancy and overflow events
+  - **Bug Fix Verification**: Monitor for improved processing efficiency and reduced duplicate frame handling
 - Adjust CAN bitrate and fallback intervals to balance responsiveness and bandwidth.
 - Monitor ring buffer statistics to optimize message processing rates.
+- **Feedback Loop Detection**: Watch for signs of message duplication or processing bottlenecks.
 
 **Section sources**
-- [ecu_joystick.cpp:254-278](file://src/ecu_joystick.cpp#L254-L278)
+- [ecu_joystick.cpp:248-276](file://src/ecu_joystick.cpp#L248-L276)
 - [README.md:105-111](file://README.md#L105-L111)
 
 ## Dependency Analysis
@@ -418,6 +430,11 @@ ECU --> MAIN["main.cpp"]
 - Ring buffer optimization:
   - Monitor ring buffer overflow events and adjust processing rates.
   - Use ring buffer for bursty message handling without blocking CAN receive.
+- **Bug Fix Benefits**:
+  - Eliminates feedback loop overhead
+  - Improves processing efficiency
+  - Prevents duplicate frame handling
+  - Reduces risk of infinite processing loops
 
 ## Troubleshooting Guide
 Common issues and remedies:
@@ -439,15 +456,23 @@ Common issues and remedies:
 - Heartbeat not observed:
   - Symptoms: offline status in monitoring.
   - Actions: verify address claiming succeeded and heartbeat interval elapsed.
+- **Feedback Loop Issues**:
+  - Symptoms: sluggish response, duplicate messages, or processing bottlenecks.
+  - Actions: verify that loop() uses direct TWAI access and receive() method works independently.
+  - Check for proper ring buffer management and message processing flow.
 
 **Section sources**
 - [ecu_joystick.cpp:205-215](file://src/ecu_joystick.cpp#L205-L215)
 - [ForwarderCAN.cpp:181-202](file://lib/ForwarderCAN/ForwarderCAN.cpp#L181-L202)
-- [ecu_joystick.cpp:254-278](file://src/ecu_joystick.cpp#L254-L278)
+- [ecu_joystick.cpp:248-276](file://src/ecu_joystick.cpp#L248-L276)
 - [ForwarderCAN.cpp:161-179](file://lib/ForwarderCAN/ForwarderCAN.cpp#L161-L179)
 
 ## Conclusion
-The Joystick ECU implements a deterministic, interrupt-free loop that samples joystick inputs, applies delta thresholds, and transmits data at controlled intervals. The enhanced CAN driver provides robust address claiming, bus-off recovery, comprehensive ring buffer management, and diagnostic visibility. The 32-message circular buffer preserves non-network-management messages for application-level consumption, preventing message loss during heavy bus loads. By tuning fallback intervals, leveraging delta thresholds, monitoring ring buffer occupancy, and optimizing message processing rates, the system achieves predictable real-time behavior with efficient bandwidth utilization and improved reliability.
+The Joystick ECU implements a deterministic, interrupt-free loop that samples joystick inputs, applies delta thresholds, and transmits data at controlled intervals. The enhanced CAN driver provides robust address claiming, bus-off recovery, comprehensive ring buffer management, and diagnostic visibility. The 32-message circular buffer preserves non-network-management messages for application-level consumption, preventing message loss during heavy bus loads. 
+
+**Bug Fix Impact**: The recent enhancement eliminates feedback loops in message processing by using direct TWAI hardware access in the loop() method, replacing the previous receive() call pattern that could cause recursive processing of the same frames. This improvement enhances system reliability and prevents potential infinite processing scenarios.
+
+By tuning fallback intervals, leveraging delta thresholds, monitoring ring buffer occupancy, and optimizing message processing rates, the system achieves predictable real-time behavior with efficient bandwidth utilization and improved reliability.
 
 ## Appendices
 

@@ -9,11 +9,14 @@
 
 // Motor driver state
 extern uint16_t g_joyPots[256][3];
+extern uint8_t g_joyButtons[256];
 extern uint32_t g_joyUpdateTime[256];
+extern uint32_t g_joyButtonUpdateTime[256];
 extern uint16_t g_solenoidValues[MAX_AXIS_COUNT];
 extern MotorConfig g_motorCfg;
 extern bool g_pca2Present;
 extern ForwarderCAN* g_can;
+extern ForwarderConfig cfgMgr;
 extern CanOutputRule g_canOutputRules[MAX_CAN_OUTPUT_RULES];
 
 // Joystick local state (for when running on joystick ECU)

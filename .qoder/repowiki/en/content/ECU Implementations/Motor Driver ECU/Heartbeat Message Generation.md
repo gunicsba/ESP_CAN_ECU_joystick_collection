@@ -11,23 +11,30 @@
 - [web_state.h](file://src/web_state.h)
 </cite>
 
+## Update Summary
+**Changes Made**
+- Updated ForwarderCAN transport layer section to reflect enhanced loop() method with direct TWAI hardware interface
+- Added performance considerations section highlighting heavy bus load prevention mechanisms
+- Updated troubleshooting guide to include system lockup prevention techniques
+- Enhanced architecture overview to show improved message processing flow
+
 ## Table of Contents
 1. [Introduction](#introduction)
 2. [Project Structure](#project-structure)
 3. [Core Components](#core-components)
 4. [Architecture Overview](#architecture-overview)
 5. [Detailed Component Analysis](#detailed-component-analysis)
-6. [Dependency Analysis](#dependency-analysis)
+6. [Enhanced Message Processing](#enhanced-message-processing)
 7. [Performance Considerations](#performance-considerations)
 8. [Troubleshooting Guide](#troubleshooting-guide)
 9. [Conclusion](#conclusion)
 
 ## Introduction
-This document explains the heartbeat message generation system used by the ForwarderCAN-based ECUs. It covers the 1-second periodic transmission of system health metrics, the PF_HEARTBEAT message format, and how heartbeat data integrates with the ForwarderCAN messaging system. It also documents timestamp handling, counter management, broadcast semantics, monitoring capabilities, and troubleshooting procedures using heartbeat statistics.
+This document explains the heartbeat message generation system used by the ForwarderCAN-based ECUs. It covers the 1-second periodic transmission of system health metrics, the PF_HEARTBEAT message format, and how heartbeat data integrates with the ForwarderCAN messaging system. The system has been enhanced with improved message processing that prevents system lockups under heavy bus load through direct TWAI hardware interface usage.
 
 ## Project Structure
 The heartbeat system spans three primary areas:
-- ForwarderCAN transport layer: CAN bus initialization, address claiming, send/receive, and statistics.
+- ForwarderCAN transport layer: CAN bus initialization, address claiming, send/receive, and statistics with enhanced heavy-load protection.
 - ECU implementations: motor driver and joystick ECUs that generate and periodically transmit heartbeat frames.
 - OTA web server: monitors heartbeats, tracks module presence and types, and exposes diagnostic data.
 
@@ -64,7 +71,7 @@ OTA --> WS
 - [ForwarderCAN.cpp:13-56](file://lib/ForwarderCAN/ForwarderCAN.cpp#L13-L56)
 
 ## Core Components
-- ForwarderCAN transport: Provides CAN initialization, address claiming, send/receive, and counters (TX/RX/Error). It supports broadcast sending and exposes online state.
+- ForwarderCAN transport: Provides CAN initialization, address claiming, send/receive, and counters (TX/RX/Error). It supports broadcast sending and exposes online state with enhanced heavy-load protection.
 - ECU heartbeat generators: Motor driver and joystick ECUs each construct and transmit a PF_HEARTBEAT frame every ~1 second when the CAN bus is online.
 - Heartbeat monitor: The OTA web server scans incoming frames, recognizes PF_HEARTBEAT, updates per-source module info, and infers device type heuristically.
 
@@ -72,6 +79,7 @@ Key responsibilities:
 - Periodic transmission: Both ECUs check a 1-second timer and send heartbeat when online.
 - Broadcast nature: Heartbeats are sent to the broadcast destination address.
 - Health metrics: Heartbeat payload encodes online status, uptime, RX/TX counters, and device-specific metadata.
+- Heavy-load protection: Enhanced loop() method prevents system lockups under high bus load conditions.
 
 **Section sources**
 - [ForwarderCAN.h:85-96](file://lib/ForwarderCAN/ForwarderCAN.h#L85-L96)
@@ -81,15 +89,17 @@ Key responsibilities:
 - [ota_webserver.cpp:740-761](file://src/ota_webserver.cpp#L740-L761)
 
 ## Architecture Overview
-The heartbeat generation follows a simple, robust pattern:
+The heartbeat generation follows a simple, robust pattern with enhanced reliability:
 - Each ECU maintains a millisecond timestamp for the last heartbeat.
 - On each loop, if 1000ms elapsed and the bus is online, the ECU constructs a PF_HEARTBEAT payload and broadcasts it.
 - The OTA web server continuously receives frames, filters for PF_HEARTBEAT, and updates module state.
+- **Enhanced**: ForwarderCAN loop() method now uses direct TWAI hardware interface to prevent system lockups under heavy bus load.
 
 ```mermaid
 sequenceDiagram
 participant ECU as "ECU Loop"
 participant CAN as "ForwarderCAN"
+participant HW as "TWAI Hardware"
 participant BUS as "CAN Bus"
 participant MON as "OTA Monitor"
 ECU->>ECU : "Check millis() - lastHeartbeat >= 1000"
@@ -97,7 +107,8 @@ ECU->>CAN : "isOnline()"
 alt "Online"
 ECU->>ECU : "Build PF_HEARTBEAT payload"
 ECU->>CAN : "sendBroadcast(PF_HEARTBEAT, data)"
-CAN->>BUS : "Transmit frame"
+CAN->>HW : "Direct TWAI transmit"
+HW->>BUS : "Transmit frame"
 BUS-->>MON : "Deliver frame"
 MON->>MON : "Filter PF_HEARTBEAT, update module info"
 else "Offline"
@@ -114,11 +125,12 @@ end
 ## Detailed Component Analysis
 
 ### ForwarderCAN Transport Layer
-ForwarderCAN encapsulates CAN operations:
+ForwarderCAN encapsulates CAN operations with enhanced heavy-load protection:
 - Initialization sets up TWAI driver, bitrate, and filter configuration.
 - Address claiming uses a deterministic state machine; online state is available via isOnline().
 - Send/receive APIs support both unicast and broadcast (destination 0xFF).
 - Counters track TX, RX, and error events.
+- **Enhanced**: loop() method now uses direct TWAI hardware interface to drain buffers safely, preventing system lockups under heavy bus load.
 
 ```mermaid
 classDiagram
@@ -228,41 +240,51 @@ end
 - [ota_webserver.cpp:16-26](file://src/ota_webserver.cpp#L16-L26)
 - [ota_webserver.cpp:740-761](file://src/ota_webserver.cpp#L740-L761)
 
-## Dependency Analysis
-The heartbeat system exhibits clean separation of concerns:
-- ECU implementations depend on ForwarderCAN for transport.
-- OTA monitoring depends on ForwarderCAN for receiving frames and on web state exports for UI exposure.
-- No circular dependencies exist among these components.
+## Enhanced Message Processing
+
+### Direct TWAI Hardware Interface Implementation
+The ForwarderCAN loop() method has been enhanced to prevent system lockups under heavy bus load through direct TWAI hardware interface usage:
+
+**Updated** Enhanced loop() method now uses direct TWAI hardware interface to drain buffers safely, preventing the feedback loop that could occur if receive() was called within loop().
 
 ```mermaid
-graph LR
-MD["ecu_motor_driver.cpp"] --> FCN["ForwarderCAN.h/.cpp"]
-JD["ecu_joystick.cpp"] --> FCN
-OTA["ota_webserver.cpp"] --> FCN
-OTA --> WS["web_state.h"]
+flowchart TD
+Start(["ForwarderCAN::loop()"]) --> Check["Check _twaiStarted"]
+Check --> State["Check TWAI state<br/>and recover if needed"]
+State --> Alerts["Read alerts to clear them"]
+Alerts --> Claim["Process address claiming state machine"]
+Claim --> Yield1["yield() for FreeRTOS"]
+Yield1 --> Drain["Drain TWAI hardware directly<br/>using twai_receive()"]
+Drain --> Guard["Apply heavy-load guard<br/>(rxCount > 30)"]
+Guard --> Process["Process received frames:<br/>- Network management<br/>- Buffer non-mgmt frames"]
+Process --> Yield2["yield() after RX processing"]
+Yield2 --> End(["Complete loop cycle"])
 ```
 
 **Diagram sources**
-- [ecu_motor_driver.cpp:8-12](file://src/ecu_motor_driver.cpp#L8-L12)
-- [ecu_joystick.cpp:6-9](file://src/ecu_joystick.cpp#L6-L9)
-- [ForwarderCAN.h:3-4](file://lib/ForwarderCAN/ForwarderCAN.h#L3-L4)
-- [ota_webserver.cpp:9-11](file://src/ota_webserver.cpp#L9-L11)
-- [web_state.h:3-7](file://src/web_state.h#L3-L7)
+- [ForwarderCAN.cpp:107-175](file://lib/ForwarderCAN/ForwarderCAN.cpp#L107-L175)
 
 **Section sources**
-- [ecu_motor_driver.cpp:8-12](file://src/ecu_motor_driver.cpp#L8-L12)
-- [ecu_joystick.cpp:6-9](file://src/ecu_joystick.cpp#L6-L9)
-- [ForwarderCAN.h:3-4](file://lib/ForwarderCAN/ForwarderCAN.h#L3-L4)
-- [ota_webserver.cpp:9-11](file://src/ota_webserver.cpp#L9-L11)
-- [web_state.h:3-7](file://src/web_state.h#L3-L7)
+- [ForwarderCAN.cpp:150-172](file://lib/ForwarderCAN/ForwarderCAN.cpp#L150-L172)
+
+### Heavy Load Prevention Mechanisms
+The enhanced implementation includes several mechanisms to prevent system lockups:
+
+1. **Direct Hardware Access**: Uses `twai_receive()` directly instead of `receive()` to avoid feedback loops
+2. **Load Guard**: Limits processed frames to 30 per loop cycle (`if (rxCount > 30) break;`)
+3. **State Recovery**: Automatically restarts stopped TWAI interfaces and initiates recovery for bus-off states
+4. **Buffer Management**: Maintains ring buffer for non-network-management messages while draining hardware directly
+
+**Section sources**
+- [ForwarderCAN.cpp:150-172](file://lib/ForwarderCAN/ForwarderCAN.cpp#L150-L172)
+- [ForwarderCAN.cpp:110-124](file://lib/ForwarderCAN/ForwarderCAN.cpp#L110-L124)
 
 ## Performance Considerations
 - Frequency: Heartbeat is transmitted approximately every 1000 ms when online, ensuring regular health signals without excessive bus load.
 - Payload size: Fixed 8-byte payload minimizes bandwidth usage.
 - Counter granularity: RX/TX counters are exposed as 8-bit values in the heartbeat payload; higher traffic loads require monitoring via transport-layer counters for precise diagnostics.
 - Bus state handling: ForwarderCAN automatically handles bus-off recovery and restarts, reducing heartbeat interruptions during transient faults.
-
-[No sources needed since this section provides general guidance]
+- **Enhanced**: Heavy-load protection prevents system lockups during high-traffic scenarios through direct hardware interface usage and frame processing limits.
 
 ## Troubleshooting Guide
 Use heartbeat data to diagnose system health:
@@ -280,15 +302,22 @@ Use heartbeat data to diagnose system health:
   - Compare heartbeat RX/TX bytes with ForwarderCAN transport counters for consistency.
   - Investigate missed frames or filtering issues if counters diverge.
 
+- **Enhanced**: System lockup prevention:
+  - Monitor for heavy bus load conditions that might trigger the 30-frame processing limit.
+  - Check TWAI hardware state using the diagnostic output in joystick ECU loop.
+  - Verify that the enhanced loop() method is properly draining hardware buffers.
+
 - Monitoring tools:
-  - Use the OTA web server’s module list to observe last seen timestamps and inferred device types.
+  - Use the OTA web server's module list to observe last seen timestamps and inferred device types.
   - Cross-check uptime values against local millis() to validate monotonicity.
+  - Monitor TWAI status information for hardware-level diagnostics.
 
 Interpretation tips:
 - Online byte indicates whether ForwarderCAN considers the bus operational.
 - Uptime helps detect unexpected resets or drift.
 - Capability byte distinguishes device types for inventory and configuration management.
 - RX/TX bytes reflect recent activity; sustained zeros suggest communication issues.
+- **Enhanced**: Heavy-load conditions may temporarily reduce frame processing throughput due to the 30-frame guard mechanism.
 
 **Section sources**
 - [ecu_motor_driver.cpp:341-346](file://src/ecu_motor_driver.cpp#L341-L346)
@@ -298,3 +327,5 @@ Interpretation tips:
 
 ## Conclusion
 The heartbeat system provides a lightweight, reliable mechanism for continuous system health monitoring over the CAN bus. By broadcasting a standardized 8-byte PF_HEARTBEAT frame every ~1 second, ECUs communicate online status, uptime, and device-specific metadata. The OTA web server leverages heartbeat frames to maintain an inventory of connected modules and infer device types, enabling effective diagnostics and troubleshooting.
+
+**Enhanced**: The recent improvements to the ForwarderCAN transport layer significantly improve system reliability by preventing lockups under heavy bus load conditions. The direct TWAI hardware interface usage and frame processing limits ensure that the system remains responsive even during high-traffic scenarios, making the heartbeat monitoring system more robust and production-ready.

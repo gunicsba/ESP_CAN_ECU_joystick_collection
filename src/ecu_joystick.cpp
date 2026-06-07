@@ -44,7 +44,7 @@
 
 static NeoPixelBus<NeoGrbFeature, Neo800KbpsMethod> strip(1, WS2812_PIN);
 ForwarderCAN* g_can = nullptr;
-static ForwarderConfig cfgMgr("joycfg");
+ForwarderConfig cfgMgr("joycfg");
 
 uint16_t g_localPot1 = 512, g_localPot2 = 512, g_localPot3 = 512;
 bool g_localBtn1 = false, g_localBtn2 = false;

@@ -11,7 +11,7 @@ void AxisConfig::pack(uint8_t buf[8], uint8_t axisIdx) const {
     buf[4] = (uint8_t)(deadbandMax / 4);
     buf[5] = pwmMin;
     buf[6] = pwmMax;
-    buf[7] = 0;
+    buf[7] = (buttonGate & 0x03) | ((flags & FLAG_AXIS_INVERT) ? 0x04 : 0x00);
 }
 
 void AxisConfig::unpack(const uint8_t buf[8]) {
@@ -23,6 +23,8 @@ void AxisConfig::unpack(const uint8_t buf[8]) {
     deadbandMax   = ((uint16_t)buf[4]) * 4;
     pwmMin        = buf[5];
     pwmMax        = buf[6];
+    buttonGate    = buf[7] & 0x03;
+    if (buf[7] & 0x04) flags |= FLAG_AXIS_INVERT;
 }
 
 // ---------------------------------------------------------------------------
@@ -98,6 +100,7 @@ bool ForwarderConfig::loadMotorConfig(MotorConfig& cfg) {
             cfg.axes[i].deadbandMax = 532;  // ~52%
             cfg.axes[i].pwmMin = 64;        // ~25%
             cfg.axes[i].pwmMax = 128;       // ~50%
+            cfg.axes[i].buttonGate = BUTTON_GATE_NONE;
         }
     }
     return true;
@@ -179,5 +182,6 @@ void ForwarderConfig::loadDefaults(MotorConfig& cfg) {
         cfg.axes[i].deadbandMax = 532;
         cfg.axes[i].pwmMin = 64;
         cfg.axes[i].pwmMax = 128;
+        cfg.axes[i].buttonGate = BUTTON_GATE_NONE;
     }
 }

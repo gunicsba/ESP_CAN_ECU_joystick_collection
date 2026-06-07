@@ -19,6 +19,7 @@
 - Added automatic controller restart capabilities
 - Improved diagnostic output and monitoring
 - Updated error handling procedures with comprehensive alert flags
+- **Optimized receive processing with reduced frame limits to prevent system lockups under heavy bus load conditions**
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -27,23 +28,25 @@
 4. [Architecture Overview](#architecture-overview)
 5. [Detailed Component Analysis](#detailed-component-analysis)
 6. [Enhanced CAN Communication](#enhanced-can-communication)
-7. [Dependency Analysis](#dependency-analysis)
-8. [Performance Considerations](#performance-considerations)
-9. [Troubleshooting Guide](#troubleshooting-guide)
-10. [Conclusion](#conclusion)
-11. [Appendices](#appendices)
+7. [Performance Optimizations](#performance-optimizations)
+8. [Dependency Analysis](#dependency-analysis)
+9. [Performance Considerations](#performance-considerations)
+10. [Troubleshooting Guide](#troubleshooting-guide)
+11. [Conclusion](#conclusion)
+12. [Appendices](#appendices)
 
 ## Introduction
-This document describes the CAN protocol implementation used by ForwarderKE, focusing on the J1939-like addressing scheme and custom message types. It explains the 29-bit extended identifier format, address claiming and arbitration during startup, and the complete set of custom CAN messages used for joystick telemetry, button reporting, LED control, solenoid commands, configuration, and heartbeats. The implementation now includes comprehensive alert configuration for enhanced CAN communication monitoring, automatic controller restart capabilities, and improved diagnostic output for robust operation in agricultural automation environments.
+This document describes the CAN protocol implementation used by ForwarderKE, focusing on the J1939-like addressing scheme and custom message types. It explains the 29-bit extended identifier format, address claiming and arbitration during startup, and the complete set of custom CAN messages used for joystick telemetry, button reporting, LED control, solenoid commands, configuration, and heartbeats. The implementation now includes comprehensive alert configuration for enhanced CAN communication monitoring, automatic controller restart capabilities, improved diagnostic output for robust operation in agricultural automation environments, and optimized receive processing to prevent system lockups under heavy bus load conditions.
 
 ## Project Structure
 The system consists of:
-- A central CAN abstraction layer implementing J1939-like addressing and address claiming with comprehensive alert monitoring
+- A central CAN abstraction layer implementing J1939-like addressing and address claiming with comprehensive alert monitoring and optimized receive processing
 - Two ECU implementations:
   - Joystick ECU: reads analog inputs and buttons, reports telemetry, controls LEDs, and responds to configuration requests
   - Motor Driver ECU: receives joystick inputs, maps to solenoids via PWM, handles LED control, and supports configuration and diagnostics
 - Optional CAN-triggered GPIO output rules for external devices
 - Enhanced diagnostic monitoring with automatic recovery mechanisms
+- **Receive optimization limiting processing to 30 frames per loop iteration to prevent system lockups**
 
 ```mermaid
 graph TB
@@ -64,6 +67,7 @@ end
 FC --> CAN
 FC --> |"Enhanced Alert Monitoring"| CAN
 FC --> |"Automatic Recovery"| CAN
+FC --> |"Receive Optimization"| CAN
 JS --> FC
 MD --> FC
 CO --> FC
@@ -91,11 +95,11 @@ CFG -.-> MD
 - [ForwarderConfig.h:64-92](file://lib/ForwarderConfig/ForwarderConfig.h#L64-L92)
 
 ## Core Components
-- ForwarderCAN: Implements J1939-like 29-bit ID layout, address claiming, arbitration, and message send/receive APIs with comprehensive alert monitoring
+- ForwarderCAN: Implements J1939-like 29-bit ID layout, address claiming, arbitration, and message send/receive APIs with comprehensive alert monitoring and receive optimization limiting processing to 30 frames per loop iteration
 - ECU implementations:
-  - Joystick ECU: sends joystick position, button states, and periodic heartbeat; controls LED color and identification
-  - Motor Driver ECU: receives joystick data, maps to solenoids, applies deadbands and directionality, and responds to configuration requests
-- CAN Output Rules: optional GPIO actions triggered by incoming CAN frames
+  - Joystick ECU: sends joystick position, button states, and periodic heartbeat; controls LED color and identification; processes up to 30 CAN frames per loop iteration
+  - Motor Driver ECU: receives joystick data, maps to solenoids, applies deadbands and directionality, and responds to configuration requests; processes up to 30 CAN frames per loop iteration
+- CAN Output Rules: optional GPIO actions triggered by incoming CAN frames with receive optimization
 - Persistent configuration: stores forced addresses, axis mapping, and CAN output rules
 - Enhanced Diagnostics: comprehensive monitoring of CAN bus health and automatic recovery mechanisms
 
@@ -387,6 +391,52 @@ This enhanced diagnostic output enables detailed troubleshooting and performance
 - [ForwarderCAN.cpp:101-103](file://lib/ForwarderCAN/ForwarderCAN.cpp#L101-L103)
 - [ForwarderCAN.cpp:87-99](file://lib/ForwarderCAN/ForwarderCAN.cpp#L87-L99)
 
+## Performance Optimizations
+
+### Receive Processing Optimization
+To prevent system lockups under heavy bus load conditions, the CAN receive processing has been optimized with a frame limit of 30 frames per loop iteration across all ECUs:
+
+- **ForwarderCAN Library**: The main receive loop processes up to 30 frames before breaking to prevent blocking
+- **Joystick ECU**: Individual receive processing limited to 30 frames per loop iteration
+- **Motor Driver ECU**: Individual receive processing limited to 30 frames per loop iteration
+- **CAN Output Rules**: Processing limited to 30 frames per loop iteration
+
+This optimization ensures that even under heavy bus load conditions, the system maintains responsiveness and prevents infinite loops that could cause system lockups.
+
+```mermaid
+flowchart TD
+Start(["Receive Loop"]) --> Check["Check for Available Frames"]
+Check --> Loop{"More Frames Available?"}
+Loop --> |Yes| Process["Process Frame"]
+Process --> Count["Increment Counter"]
+Count --> Limit{"Counter > 30?"}
+Limit --> |No| Loop
+Limit --> |Yes| Break["Break Loop"]
+Loop --> |No| Complete["Complete Processing"]
+Break --> Complete
+```
+
+**Diagram sources**
+- [ForwarderCAN.cpp:150-162](file://lib/ForwarderCAN/ForwarderCAN.cpp#L150-L162)
+- [ecu_joystick.cpp:133-165](file://src/ecu_joystick.cpp#L133-L165)
+- [ecu_motor_driver.cpp:217-316](file://src/ecu_motor_driver.cpp#L217-L316)
+
+**Section sources**
+- [ForwarderCAN.cpp:150-162](file://lib/ForwarderCAN/ForwarderCAN.cpp#L150-L162)
+- [ecu_joystick.cpp:133-165](file://src/ecu_joystick.cpp#L133-L165)
+- [ecu_motor_driver.cpp:217-316](file://src/ecu_motor_driver.cpp#L217-L316)
+
+### Practical Examples: Receive Optimization
+- **ForwarderCAN Receive Loop**: Processes up to 30 frames before breaking to prevent lockups
+- **Joystick ECU Processing**: Limits individual processing to 30 frames per loop iteration
+- **Motor Driver Processing**: Limits individual processing to 30 frames per loop iteration
+- **CAN Output Processing**: Limits processing to 30 frames per loop iteration
+
+**Section sources**
+- [ForwarderCAN.cpp:155](file://lib/ForwarderCAN/ForwarderCAN.cpp#L155)
+- [ecu_joystick.cpp:138](file://src/ecu_joystick.cpp#L138)
+- [ecu_motor_driver.cpp:222](file://src/ecu_motor_driver.cpp#L222)
+
 ## Dependency Analysis
 ```mermaid
 graph LR
@@ -399,6 +449,7 @@ MD --> CFG
 FC --> ESP["ESP32 TWAI"]
 FC --> |"Enhanced Alert System"| ESP
 FC --> |"Automatic Recovery"| ESP
+FC --> |"Receive Optimization"| ESP
 MD --> PCA["PCA9685"]
 JS --> LED["Neopixel"]
 MD --> LED
@@ -425,9 +476,11 @@ MD --> LED
 - Safety:
   - Automatic solenoid deactivation after 500 ms absence of updates
   - Enhanced bus error detection and automatic recovery
+  - **Receive optimization limiting processing to 30 frames per loop iteration**
 - Bus utilization:
   - Minimal overhead with small payloads and targeted broadcasts
   - Comprehensive alert monitoring with minimal performance impact
+  - **System lockup prevention under heavy bus load conditions**
 
 ## Troubleshooting Guide
 - CAN initialization failure:
@@ -446,6 +499,9 @@ MD --> LED
 - Comprehensive Diagnostics:
   - Serial output provides detailed bus health and error information
   - Alert monitoring helps identify specific failure points
+- **Receive Optimization Issues**:
+  - If frames are being dropped under heavy load, verify the 30-frame limit is appropriate
+  - Monitor RX counts to ensure frames are being processed efficiently
 
 **Section sources**
 - [ecu_joystick.cpp:175-185](file://src/ecu_joystick.cpp#L175-L185)
@@ -456,7 +512,7 @@ MD --> LED
 - [ForwarderCAN.cpp:87-99](file://lib/ForwarderCAN/ForwarderCAN.cpp#L87-L99)
 
 ## Conclusion
-ForwarderKE implements a robust J1939-like CAN protocol tailored for agricultural automation with enhanced reliability through comprehensive alert monitoring, automatic recovery mechanisms, and detailed diagnostic capabilities. The design leverages a simple address claiming mechanism, clear PF-based message semantics, and practical timing to ensure reliable operation. The protocol supports telemetry, actuation, diagnostics, and remote configuration, with built-in safety and comprehensive monitoring systems that automatically detect and recover from bus errors.
+ForwarderKE implements a robust J1939-like CAN protocol tailored for agricultural automation with enhanced reliability through comprehensive alert monitoring, automatic recovery mechanisms, and detailed diagnostic capabilities. The design leverages a simple address claiming mechanism, clear PF-based message semantics, and practical timing to ensure reliable operation. The protocol supports telemetry, actuation, diagnostics, and remote configuration, with built-in safety and comprehensive monitoring systems that automatically detect and recover from bus errors. **Recent optimizations include receive processing limits of 30 frames per loop iteration to prevent system lockups under heavy bus load conditions, ensuring continued operation even in demanding agricultural environments.**
 
 ## Appendices
 
@@ -499,6 +555,26 @@ Restart --> Monitor
 - [ForwarderCAN.cpp:46-51](file://lib/ForwarderCAN/ForwarderCAN.cpp#L46-L51)
 - [ForwarderCAN.cpp:87-99](file://lib/ForwarderCAN/ForwarderCAN.cpp#L87-L99)
 - [ForwarderCAN.cpp:101-103](file://lib/ForwarderCAN/ForwarderCAN.cpp#L101-L103)
+
+### Receive Optimization Flow
+```mermaid
+flowchart TD
+Start(["Receive Processing"]) --> Init["Initialize Counter = 0"]
+Init --> Check["Check for Available Frames"]
+Check --> Loop{"More Frames Available?"}
+Loop --> |Yes| Process["Process Frame"]
+Process --> Increment["Increment Counter"]
+Increment --> Limit{"Counter > 30?"}
+Limit --> |No| Check
+Limit --> |Yes| Break["Break Loop"]
+Loop --> |No| Complete["Complete Processing"]
+Break --> Complete
+```
+
+**Diagram sources**
+- [ForwarderCAN.cpp:150-162](file://lib/ForwarderCAN/ForwarderCAN.cpp#L150-L162)
+- [ecu_joystick.cpp:133-165](file://src/ecu_joystick.cpp#L133-L165)
+- [ecu_motor_driver.cpp:217-316](file://src/ecu_motor_driver.cpp#L217-L316)
 
 ### Joystick to Solenoid Mapping Flow
 ```mermaid

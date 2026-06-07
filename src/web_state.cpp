@@ -5,7 +5,9 @@
 
 #if !defined(ECU_TYPE_MOTOR_DRIVER)
 uint16_t g_joyPots[256][3] = {{0}};
+uint8_t g_joyButtons[256] = {0};
 uint32_t g_joyUpdateTime[256] = {0};
+uint32_t g_joyButtonUpdateTime[256] = {0};
 uint16_t g_solenoidValues[MAX_AXIS_COUNT] = {0};
 MotorConfig g_motorCfg;
 bool g_pca2Present = false;

@@ -16,6 +16,13 @@
 - [README.md](file://README.md)
 </cite>
 
+## Update Summary
+**Changes Made**
+- Updated polling interval documentation from 200ms to 1000ms for reduced server load
+- Added documentation for chunked transfer encoding and fixed-size buffer improvements
+- Updated performance considerations section with memory efficiency enhancements
+- Revised troubleshooting guidance for new polling interval
+
 ## Table of Contents
 1. [Introduction](#introduction)
 2. [Project Structure](#project-structure)
@@ -93,7 +100,7 @@ PIO --> WS
   - Initializes Wi-Fi access point mode, sets up mDNS, registers HTTP routes, starts the server, and handles client requests.
   - Provides handlers for:
     - GET /: serves the static HTML page
-    - GET /api/state: returns live telemetry and state
+    - GET /api/state: returns live telemetry and state using chunked transfer encoding with fixed-size buffers
     - GET /api/config: returns motor mapping configuration
     - POST /api/config: updates motor mapping configuration
     - POST /api/identify: sends an identify command to a target module
@@ -120,12 +127,12 @@ PIO --> WS
 ## Architecture Overview
 The web server architecture follows a modular design:
 - Initialization
-  - ECU setup initializes CAN, loads persistent configuration, and starts the web server with a hostname derived from the device’s CAN address.
+  - ECU setup initializes CAN, loads persistent configuration, and starts the web server with a hostname derived from the device's CAN address.
   - The web server sets up Wi-Fi AP mode, creates an access point, and advertises an HTTP service via mDNS.
 - Routing and Handlers
   - Routes are registered for the root page and API endpoints. Each handler reads shared state and returns JSON or HTML responses.
 - Client Interaction
-  - The embedded HTML page uses JavaScript to poll /api/state and other endpoints at short intervals, updating the UI dynamically.
+  - The embedded HTML page uses JavaScript to poll /api/state and other endpoints at 1-second intervals, updating the UI dynamically.
   - Configuration changes are posted back to the server, which persists them and applies them immediately where applicable.
 - OTA Update
   - The /update endpoint accepts multipart/form-data firmware uploads and performs the update sequence, restarting the device upon success.
@@ -144,7 +151,7 @@ Handlers-->>Client : 200 HTML
 Client->>Server : GET /api/state
 Server->>Handlers : handleState()
 Handlers->>State : read sensors, config, modules
-Handlers-->>Client : 200 application/json
+Handlers-->>Client : 200 application/json (chunked)
 Client->>Server : POST /api/config
 Server->>Handlers : handleConfigPost()
 Handlers->>State : update axis configs
@@ -188,7 +195,7 @@ OTA->>OTA : finalize and restart
   - OTA: POST /update (multipart upload)
 - Handler behaviors
   - handleRoot: returns embedded HTML
-  - handleState: aggregates telemetry and module info
+  - handleState: aggregates telemetry and module info using chunked transfer encoding with fixed-size buffers
   - handleConfigGet/handleConfigPost: serialize/deserialize motor mapping
   - handleIdentify/handleAddress: send commands to target modules
   - handleCanOutputGet/handleCanOutputPost: manage CAN-triggered GPIO rules
@@ -220,7 +227,7 @@ Begin --> Running(["Server Running on Port 80"])
   - A firmware upload form for OTA updates
 - JavaScript-driven updates
   - Uses fetch() to poll /api/state, /api/config, and /api/canoutput
-  - Polling interval is approximately 200 ms
+  - **Updated**: Polling interval is now 1000ms (1 second) to reduce server load and bandwidth usage
   - Updates DOM elements with telemetry and configuration data
   - Handles OTA progress via XMLHttpRequest onprogress
 
@@ -232,7 +239,7 @@ participant API as "/api/state"
 participant Config as "/api/config"
 participant CANOut as "/api/canoutput"
 JS->>API : fetch('/api/state')
-API-->>JS : JSON state
+API-->>JS : JSON state (chunked)
 JS->>UI : update telemetry and charts
 JS->>Config : fetch('/api/config')
 Config-->>JS : JSON config
@@ -240,7 +247,7 @@ JS->>UI : render mapping controls
 JS->>CANOut : fetch('/api/canoutput')
 CANOut-->>JS : JSON rules
 JS->>UI : render CAN output controls
-Note over JS : setInterval(fetchState, 200)
+Note over JS : setInterval(fetchState, 1000)
 ```
 
 **Diagram sources**
@@ -254,7 +261,7 @@ Note over JS : setInterval(fetchState, 200)
 ### Server Lifecycle Management
 - Startup sequence
   - ECU setup initializes CAN and loads configuration
-  - ota_setup(host) is called with a hostname derived from the device’s CAN address
+  - ota_setup(host) is called with a hostname derived from the device's CAN address
   - Wi-Fi AP is created, mDNS service is advertised, routes are registered, and server begins
 - Loop integration
   - ECU loop calls ota_loop() to process HTTP requests and periodic tasks
@@ -295,7 +302,7 @@ Serving --> Serving : "ota_loop()"
   - OTA: POST /update (multipart upload)
 - Handler responsibilities
   - handleRoot: serve embedded HTML
-  - handleState: assemble telemetry and module info
+  - handleState: assemble telemetry and module info using chunked transfer encoding
   - handleConfigGet/handleConfigPost: serialize/deserialize motor mapping
   - handleIdentify/handleAddress: send commands to target modules
   - handleCanOutputGet/handleCanOutputPost: manage CAN-triggered GPIO rules
@@ -331,7 +338,7 @@ class WebServerModule {
 
 ### Client-Server Communication Patterns
 - Polling model
-  - The UI polls /api/state every ~200 ms to keep the dashboard fresh
+  - **Updated**: The UI polls /api/state every 1000ms (1 second) to keep the dashboard fresh, reducing server load and bandwidth usage
   - Additional endpoints are polled for configuration and CAN output rules
 - Request/response
   - GET requests return JSON for state and configuration
@@ -397,8 +404,10 @@ PIO["platformio.ini"] --> WS
 - [platformio.ini:63-79](file://platformio.ini#L63-L79)
 
 ## Performance Considerations
-- Polling interval
-  - The UI polls /api/state every ~200 ms. Adjusting this interval can reduce CPU usage and network traffic.
+- **Updated**: Polling interval optimization
+  - The UI polls /api/state every 1000ms (1 second) instead of 200ms. This significant reduction in polling frequency dramatically reduces CPU usage and network traffic while maintaining acceptable UI responsiveness.
+- **Updated**: Memory-efficient state handling
+  - The handleState() function now uses chunked transfer encoding with a fixed 1024-byte buffer and snprintf() for building JSON responses, avoiding massive heap allocations and improving memory efficiency.
 - Handler complexity
   - handleState iterates over potential joystick addresses and modules. Keeping the iteration bounds reasonable helps maintain responsiveness.
 - OTA throughput
@@ -411,7 +420,7 @@ PIO["platformio.ini"] --> WS
   - Verify ENABLE_OTA_WEBSERVER is defined in the build environment
   - Confirm ota_setup() is called during ECU setup
 - Cannot connect to AP
-  - Default password is “12345678”
+  - Default password is "12345678"
   - Ensure the device is powered and booted
 - mDNS resolution fails
   - Confirm MDNS.begin() succeeded and service is added
@@ -421,7 +430,7 @@ PIO["platformio.ini"] --> WS
   - Ensure the uploaded file is a valid .bin
   - Retry after clearing any partial transfers
 - UI does not update
-  - Verify /api/state is reachable and returns JSON
+  - **Updated**: Verify /api/state is reachable and returns JSON. With the 1-second polling interval, expect updates every second rather than every 200ms
   - Check browser console for fetch errors
 - Configuration not persisting
   - Motor mapping and CAN output rules are saved to NVS on the device
@@ -434,7 +443,7 @@ PIO["platformio.ini"] --> WS
 - [ota_webserver.cpp:506-563](file://src/ota_webserver.cpp#L506-L563)
 
 ## Conclusion
-The web server module provides a lightweight, embedded HTTP interface for the Forwarder CAN Controller. It integrates seamlessly with the ECU applications, enabling real-time monitoring, configuration, and OTA updates. The design emphasizes modularity and build-time selection, allowing deployment in constrained environments without the web stack when not needed.
+The web server module provides a lightweight, embedded HTTP interface for the Forwarder CAN Controller. It integrates seamlessly with the ECU applications, enabling real-time monitoring, configuration, and OTA updates. The design emphasizes modularity and build-time selection, allowing deployment in constrained environments without the web stack when not needed. Recent optimizations include reduced polling frequency for better resource utilization and memory-efficient state handling for improved reliability.
 
 ## Appendices
 
@@ -442,7 +451,7 @@ The web server module provides a lightweight, embedded HTTP interface for the Fo
 
 - Server startup sequence
   - ECU setup initializes CAN and loads configuration
-  - ota_setup(host) is invoked with a hostname derived from the device’s CAN address
+  - ota_setup(host) is invoked with a hostname derived from the device's CAN address
   - Wi-Fi AP is created, mDNS service is advertised, routes are registered, and server begins
   - ECU loop calls ota_loop() continuously
 
@@ -455,7 +464,7 @@ The web server module provides a lightweight, embedded HTTP interface for the Fo
   - OTA: POST /update (multipart upload)
 
 - Client-server communication
-  - The UI polls /api/state every ~200 ms
+  - **Updated**: The UI polls /api/state every 1000ms (1 second) instead of 200ms
   - Configuration changes are posted to /api/config and /api/canoutput
   - OTA firmware is uploaded to /update
 
@@ -468,7 +477,7 @@ The web server module provides a lightweight, embedded HTTP interface for the Fo
 
 ### Security Considerations
 - Access point credentials
-  - Default Wi-Fi password is “12345678”. Change this in production deployments by modifying the password passed to WiFi.softAP().
+  - Default Wi-Fi password is "12345678". Change this in production deployments by modifying the password passed to WiFi.softAP().
 - Network isolation
   - The AP operates independently of external networks. Consider disabling OTA in production or adding authentication at the application level.
 - OTA security

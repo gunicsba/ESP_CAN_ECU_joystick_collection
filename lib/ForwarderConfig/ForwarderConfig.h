@@ -14,11 +14,17 @@
 // [4] = deadband_max / 4  (0-255 maps to 0-1020)
 // [5] = pwm_min (0-255, scaled to 12-bit on output)
 // [6] = pwm_max (0-255)
-// [7] = reserved
+// [7] = button_gate (0=none, 1=BTN1 pressed, 2=BTN1 released)
 // ---------------------------------------------------------------------------
+
+// Button gate modes for axis activation based on joystick button state
+#define BUTTON_GATE_NONE            0   // Always active (no gating)
+#define BUTTON_GATE_BTN1_PRESSED    1   // Active only when BTN1 is pressed
+#define BUTTON_GATE_BTN1_RELEASED   2   // Active only when BTN1 is NOT pressed
 
 #define FLAG_AXIS_ENABLED       0x01
 #define FLAG_AXIS_BIDIRECTIONAL 0x02
+#define FLAG_AXIS_INVERT        0x04
 
 #define MAX_AXIS_COUNT          16
 #define MAX_PCA_COUNT           2
@@ -47,9 +53,11 @@ struct AxisConfig {
     uint8_t pwmMin;          // 0-255 -> 0-4095
     uint8_t pwmMax;          // 0-255 -> 0-4095
     uint8_t flags;           // FLAG_AXIS_ENABLED, FLAG_AXIS_BIDIRECTIONAL
+    uint8_t buttonGate;      // BUTTON_GATE_NONE, BUTTON_GATE_BTN1_PRESSED, BUTTON_GATE_BTN1_RELEASED
 
     bool isEnabled() const { return flags & FLAG_AXIS_ENABLED; }
     bool isBidirectional() const { return flags & FLAG_AXIS_BIDIRECTIONAL; }
+    bool isInverted() const { return flags & FLAG_AXIS_INVERT; }
 
     void pack(uint8_t buf[8], uint8_t axisIdx) const;
     void unpack(const uint8_t buf[8]);

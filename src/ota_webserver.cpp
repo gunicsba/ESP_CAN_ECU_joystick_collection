@@ -142,8 +142,8 @@ input[type="range"] {
 }
 .axis-row {
     display: grid;
-    grid-template-columns: 40px 60px 70px 70px 50px 1fr 1fr 80px 80px 60px;
-    gap: 8px;
+    grid-template-columns: 36px 50px 65px 65px 45px 70px 70px 70px 70px 50px 50px 85px;
+    gap: 6px;
     align-items: center;
     padding: 6px 0;
     border-bottom: 1px solid #334155;
@@ -161,7 +161,7 @@ input[type="range"] {
 }
 .canout-row.header { color: #94a3b8; font-weight: 500; border-bottom: 2px solid #475569; }
 @media (max-width: 1000px) {
-    .axis-row { grid-template-columns: 30px 50px 60px 60px 40px 1fr 1fr 60px 60px 50px; }
+    .axis-row { grid-template-columns: 30px 45px 55px 55px 40px 60px 60px 60px 60px 45px 45px 75px; }
 }
 .slider-group { display: flex; align-items: center; gap: 8px; }
 .slider-group input[type="range"] { flex: 1; }
@@ -201,6 +201,11 @@ input[type="range"] {
             <div id="joy2_pots"></div>
             <div class="info-row"><span>Buttons:</span><span id="joy2_btns">--</span></div>
         </div>
+    </div>
+    <div class="card">
+        <h3>Deadband Status</h3>
+        <p style="color:#94a3b8;font-size:0.72rem;margin:0 0 8px">Shows configured deadband vs actual joystick center. Offset = how far the configured center deviates from ADC midpoint (512).</p>
+        <div id="db_status"></div>
     </div>
     <div class="card">
         <h3>Solenoid Outputs</h3>
@@ -352,6 +357,52 @@ function renderSol() {
     document.getElementById('sol_bars').innerHTML = h;
 }
 
+function renderDeadband() {
+    const axes = gConfig.axes || [];
+    let h = '';
+    let found = false;
+    for (let i = 0; i < 16; i++) {
+        const a = axes[i];
+        if (!a || !(a.flags & 1)) continue; // skip disabled
+        found = true;
+        const src = a.sourceAddress;
+        const pot = a.potIndex;
+        const dbMin = a.deadbandMin || 0;
+        const dbMax = a.deadbandMax || 0;
+        const center = Math.round((dbMin + dbMax) / 2);
+        const offset = center - 512;
+        const offsetPct = ((offset / 512) * 100).toFixed(1);
+        const offsetColor = Math.abs(offset) < 10 ? '#22c55e' : (Math.abs(offset) < 30 ? '#f59e0b' : '#ef4444');
+        // Get current pot value
+        let potVal = '--';
+        let potPct = '';
+        let dir = 'IDLE';
+        let dirColor = '#94a3b8';
+        if (src && gState.joy && gState.joy[src]) {
+            const pv = gState.joy[src].pots[pot];
+            if (pv !== undefined) {
+                potVal = pv;
+                if (pv < dbMin) { dir = 'REV'; dirColor = '#3b82f6'; potPct = (((dbMin - pv) / Math.max(dbMin, 1)) * 100).toFixed(0) + '%'; }
+                else if (pv > dbMax) { dir = 'FWD'; dirColor = '#22c55e'; potPct = (((pv - dbMax) / Math.max(1023 - dbMax, 1)) * 100).toFixed(0) + '%'; }
+                else { dir = 'DEAD'; dirColor = '#f59e0b'; potPct = '0%'; }
+            }
+        }
+        const srcLabel = src ? '0x' + src.toString(16).toUpperCase() : 'Off';
+        h += `<div class="info-row" style="font-size:0.78rem;padding:3px 0;border-bottom:1px solid #1e293b">
+            <span style="min-width:35px">A${i}</span>
+            <span style="min-width:40px">${srcLabel}</span>
+            <span style="min-width:35px">P${pot+1}</span>
+            <span style="min-width:80px">DB: ${dbMin}-${dbMax}</span>
+            <span style="min-width:70px">Ctr: ${center}</span>
+            <span style="min-width:75px;color:${offsetColor}">Off: ${offsetPct}%</span>
+            <span style="min-width:50px">Val: ${potVal}</span>
+            <span style="min-width:60px;color:${dirColor};font-weight:600">${dir} ${potPct}</span>
+        </div>`;
+    }
+    if (!found) h = '<div style="color:#64748b;text-align:center;padding:12px">No axes configured</div>';
+    document.getElementById('db_status').innerHTML = h;
+}
+
 function renderModules() {
     const mods = gState.modules || {};
     let rows = '';
@@ -376,23 +427,44 @@ function renderModules() {
 
 function renderMapping() {
     const axes = gConfig.axes || [];
-    let h = '<div class="axis-row header"><div>#</div><div>En</div><div>Src</div><div>Pot</div><div>Ch</div><div>Deadband Min-Max</div><div>PWM Min-Max</div><div>DB Min</div><div>DB Max</div><div>Bidir</div></div>';
-    h += '<div style="padding:4px 8px;color:#94a3b8;font-size:0.75rem;grid-column:1/-1">Bidirectional axes use paired channels: Ch=fwd, Ch+1=rev (e.g. Ch0+1, Ch2+3)</div>';
+    let h = '<div class="axis-row header">';
+    h += '<div title="Axis index (0-15)">#</div>';
+    h += '<div title="Enable this axis">En</div>';
+    h += '<div title="Joystick source address">Src</div>';
+    h += '<div title="Potentiometer input (1-3)">Pot</div>';
+    h += '<div title="PCA9685 output channel (0-15). Ch 0-7 = 1st board, Ch 8-15 = 2nd board">Ch</div>';
+    h += '<div title="Deadband lower bound (ADC 0-1023). Below this = reverse direction for bidirectional axes">DB Min</div>';
+    h += '<div title="Deadband upper bound (ADC 0-1023). Above this = forward direction">DB Max</div>';
+    h += '<div title="Minimum PWM output duty (0-255). Scaled to 0-4095 on the PCA9685 output">PWM Min</div>';
+    h += '<div title="Maximum PWM output duty (0-255). Scaled to 0-4095 on the PCA9685 output">PWM Max</div>';
+    h += '<div title="Bidirectional: uses paired channels Ch (fwd) + Ch+1 (rev)">Bidir</div>';
+    h += '<div title="Invert: swaps forward/reverse channels so joystick direction is reversed">Inv</div>';
+    h += '<div title="Button gate: axis only active when BTN1 is pressed (BTN1) or released (!BTN1). None = always active">Gate</div>';
+    h += '</div>';
+    h += '<div style="padding:6px 8px;color:#94a3b8;font-size:0.72rem;grid-column:1/-1;line-height:1.5">';
+    h += '<b>Deadband:</b> Joystick values between DB Min and DB Max are treated as center (no output). ';
+    h += '<b>PWM Min/Max:</b> Output duty range (0=off, 255=full). ';
+    h += '<b>Bidir:</b> Uses 2 channels: Ch=forward, Ch+1=reverse. ';
+    h += '<b>Gate:</b> When BTN1 toggles, gated axes zero their outputs (valve returns to center).';
+    h += '</div>';
     for (let i = 0; i < 16; i++) {
-        const a = axes[i] || { sourceAddress: 0, potIndex: 0, outputChannel: i, deadbandMin: 492, deadbandMax: 532, pwmMin: 64, pwmMax: 128, flags: 0 };
+        const a = axes[i] || { sourceAddress: 0, potIndex: 0, outputChannel: i, deadbandMin: 492, deadbandMax: 532, pwmMin: 64, pwmMax: 128, flags: 0, buttonGate: 0 };
         const en = (a.flags & 1) ? 'checked' : '';
         const bidir = (a.flags & 2) ? 'checked' : '';
+        const invert = (a.flags & 4) ? 'checked' : '';
         h += `<div class="axis-row">
             <div>${i}</div>
             <div><input type="checkbox" id="a${i}_en" ${en}></div>
             <div><select id="a${i}_src"><option value="0">Off</option><option value="33" ${a.sourceAddress==33?'selected':''}>0x21</option><option value="34" ${a.sourceAddress==34?'selected':''}>0x22</option></select></div>
             <div><select id="a${i}_pot"><option value="0" ${a.potIndex==0?'selected':''}>Pot1</option><option value="1" ${a.potIndex==1?'selected':''}>Pot2</option><option value="2" ${a.potIndex==2?'selected':''}>Pot3</option></select></div>
-            <div><input type="number" id="a${i}_ch" value="${a.outputChannel}" min="0" max="15" style="width:50px"></div>
-            <div class="slider-group"><input type="range" id="a${i}_dbmin" min="0" max="1023" value="${a.deadbandMin}" oninput="document.getElementById('a${i}_dbmin_v').textContent=this.value"><span id="a${i}_dbmin_v">${a.deadbandMin}</span></div>
-            <div class="slider-group"><input type="range" id="a${i}_dbmax" min="0" max="1023" value="${a.deadbandMax}" oninput="document.getElementById('a${i}_dbmax_v').textContent=this.value"><span id="a${i}_dbmax_v">${a.deadbandMax}</span></div>
-            <div><input type="number" id="a${i}_pwmin" value="${a.pwmMin}" min="0" max="255" style="width:50px"></div>
-            <div><input type="number" id="a${i}_pwmax" value="${a.pwmMax}" min="0" max="255" style="width:50px"></div>
+            <div><input type="number" id="a${i}_ch" value="${a.outputChannel}" min="0" max="15" style="width:45px"></div>
+            <div><input type="number" id="a${i}_dbmin" value="${a.deadbandMin}" min="0" max="1023" style="width:60px"></div>
+            <div><input type="number" id="a${i}_dbmax" value="${a.deadbandMax}" min="0" max="1023" style="width:60px"></div>
+            <div><input type="number" id="a${i}_pwmin" value="${a.pwmMin}" min="0" max="255" style="width:60px"></div>
+            <div><input type="number" id="a${i}_pwmax" value="${a.pwmMax}" min="0" max="255" style="width:60px"></div>
             <div><input type="checkbox" id="a${i}_bidir" ${bidir}></div>
+            <div><input type="checkbox" id="a${i}_inv" ${invert}></div>
+            <div><select id="a${i}_bgate"><option value="0" ${a.buttonGate==0?'selected':''}>None</option><option value="1" ${a.buttonGate==1?'selected':''}>BTN1</option><option value="2" ${a.buttonGate==2?'selected':''}>!BTN1</option></select></div>
         </div>`;
     }
     document.getElementById('axisList').innerHTML = h;
@@ -409,6 +481,7 @@ async function fetchState() {
         document.getElementById('errCount').textContent = gState.errCount;
         document.getElementById('uptime').textContent = gState.uptime + 's';
         renderJoysticks();
+        renderDeadband();
         renderSol();
         renderModules();
     } catch(e) {}
@@ -493,7 +566,7 @@ async function setAddr(current) {
 async function saveMapping() {
     const axes = [];
     for (let i = 0; i < 16; i++) {
-        const flags = (document.getElementById('a' + i + '_en').checked ? 1 : 0) | (document.getElementById('a' + i + '_bidir').checked ? 2 : 0);
+        const flags = (document.getElementById('a' + i + '_en').checked ? 1 : 0) | (document.getElementById('a' + i + '_bidir').checked ? 2 : 0) | (document.getElementById('a' + i + '_inv').checked ? 4 : 0);
         axes.push({
             axisIdx: i,
             sourceAddress: parseInt(document.getElementById('a' + i + '_src').value),
@@ -503,7 +576,8 @@ async function saveMapping() {
             deadbandMax: parseInt(document.getElementById('a' + i + '_dbmax').value),
             pwmMin: parseInt(document.getElementById('a' + i + '_pwmin').value),
             pwmMax: parseInt(document.getElementById('a' + i + '_pwmax').value),
-            flags: flags
+            flags: flags,
+            buttonGate: parseInt(document.getElementById('a' + i + '_bgate').value) || 0
         });
     }
     try {
@@ -604,7 +678,7 @@ static void handleRoot() {
 static void handleState() {
     // Use chunked transfer to avoid massive heap allocation
     // Build JSON in a fixed buffer
-    static char buf[1024];
+    static char buf[1280];
     int pos = 0;
     pos += snprintf(buf + pos, sizeof(buf) - pos,
         "{\"localAddr\":%d,\"online\":%s,\"uptime\":%lu,\"txCount\":%lu,\"rxCount\":%lu,\"errCount\":%lu,",
@@ -622,8 +696,9 @@ static void handleState() {
         if (g_joyUpdateTime[sa] > 0 && millis() - g_joyUpdateTime[sa] < 2000) {
             if (!firstJoy) pos += snprintf(buf + pos, sizeof(buf) - pos, ",");
             pos += snprintf(buf + pos, sizeof(buf) - pos,
-                "\"%d\":{\"pots\":[%d,%d,%d],\"age\":%lu}",
+                "\"%d\":{\"pots\":[%d,%d,%d],\"btns\":%d,\"age\":%lu}",
                 sa, g_joyPots[sa][0], g_joyPots[sa][1], g_joyPots[sa][2],
+                g_joyButtons[sa],
                 (millis() - g_joyUpdateTime[sa]) / 1000);
             firstJoy = false;
         }
@@ -672,7 +747,8 @@ static void handleConfigGet() {
         json += "\"deadbandMax\":" + String(a.deadbandMax) + ",";
         json += "\"pwmMin\":" + String(a.pwmMin) + ",";
         json += "\"pwmMax\":" + String(a.pwmMax) + ",";
-        json += "\"flags\":" + String(a.flags);
+        json += "\"flags\":" + String(a.flags) + ",";
+        json += "\"buttonGate\":" + String(a.buttonGate);
         json += "},";
     }
     if (json.endsWith(",")) json.remove(json.length() - 1);
@@ -699,13 +775,12 @@ static void handleConfigPost() {
                 a.pwmMin = parseJsonInt(body, "pwmMin", idx);
                 a.pwmMax = parseJsonInt(body, "pwmMax", idx);
                 a.flags = parseJsonInt(body, "flags", idx);
+                a.buttonGate = parseJsonInt(body, "buttonGate", idx);
                 g_motorCfg.axes[i] = a;
 
                 // Save locally if motor driver
 #if defined(ECU_TYPE_MOTOR_DRIVER)
-                ForwarderConfig cfg("motorcfg");
-                cfg.begin();
-                cfg.saveAxisConfig(i, a);
+                cfgMgr.saveAxisConfig(i, a);
 #endif
                 // Also broadcast to motor driver if this is a joystick
 #if defined(ECU_TYPE_JOYSTICK)

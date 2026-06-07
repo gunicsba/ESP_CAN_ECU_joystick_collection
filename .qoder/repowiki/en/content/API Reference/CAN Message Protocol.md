@@ -13,23 +13,32 @@
 - [main.cpp](file://src/main.cpp)
 </cite>
 
+## Update Summary
+**Changes Made**
+- Added comprehensive reliability improvements section documenting the feedback loop prevention mechanism
+- Updated performance considerations to include heavy bus load handling
+- Enhanced troubleshooting guide with specific guidance for system lockup scenarios
+- Added detailed explanation of the 30-frame processing limit mechanism
+- Updated architecture overview to reflect improved message processing flow
+
 ## Table of Contents
 1. [Introduction](#introduction)
 2. [Project Structure](#project-structure)
 3. [Core Components](#core-components)
 4. [Architecture Overview](#architecture-overview)
 5. [Detailed Component Analysis](#detailed-component-analysis)
-6. [Dependency Analysis](#dependency-analysis)
-7. [Performance Considerations](#performance-considerations)
-8. [Troubleshooting Guide](#troubleshooting-guide)
-9. [Conclusion](#conclusion)
+6. [Reliability Improvements](#reliability-improvements)
+7. [Dependency Analysis](#dependency-analysis)
+8. [Performance Considerations](#performance-considerations)
+9. [Troubleshooting Guide](#troubleshooting-guide)
+10. [Conclusion](#conclusion)
 
 ## Introduction
-This document specifies the J1939-like CAN message protocol used by ForwarderKE devices. It defines custom message types, CAN ID layout, arbitration, address claiming, and operational semantics for heartbeat, axis configuration, device identification, address assignment, and CAN-triggered GPIO control rules. It also documents parameter ranges, bit field layouts, and timing requirements for reliable operation.
+This document specifies the J1939-like CAN message protocol used by ForwarderKE devices. It defines custom message types, CAN ID layout, arbitration, address claiming, and operational semantics for heartbeat, axis configuration, device identification, address assignment, and CAN-triggered GPIO control rules. It also documents parameter ranges, bit field layouts, and timing requirements for reliable operation under various network conditions.
 
 ## Project Structure
 The protocol is implemented across several modules:
-- ForwarderCAN: CAN driver, ID packing/unpacking, address claiming, and message send/receive.
+- ForwarderCAN: CAN driver, ID packing/unpacking, address claiming, and message send/receive with reliability improvements.
 - ForwarderConfig: Persistent storage and serialization of axis and CAN output rules.
 - ECU implementations: Joystick and motor driver ECUs that send and receive protocol messages.
 - CAN output engine: Applies CAN-triggered GPIO actions based on configured rules.
@@ -37,7 +46,7 @@ The protocol is implemented across several modules:
 ```mermaid
 graph TB
 subgraph "CAN Layer"
-FCN["ForwarderCAN<br/>ID layout, NM, send/receive"]
+FCN["ForwarderCAN<br/>ID layout, NM, send/receive<br/>with reliability improvements"]
 end
 subgraph "Config Layer"
 FCFG["ForwarderConfig<br/>NVS persistence, pack/unpack"]
@@ -75,6 +84,7 @@ FCN --> CO
 - Network management for address claiming and conflict resolution.
 - Application messages for joysticks, solenoids, LEDs, identification, configuration, and heartbeats.
 - CAN-triggered GPIO control via configurable rules.
+- **Enhanced reliability mechanisms** to prevent system lockups during heavy bus load conditions.
 
 **Section sources**
 - [ForwarderCAN.h:6-34](file://lib/ForwarderCAN/ForwarderCAN.h#L6-L34)
@@ -82,7 +92,7 @@ FCN --> CO
 - [ForwarderCAN.cpp:54-119](file://lib/ForwarderCAN/ForwarderCAN.cpp#L54-L119)
 
 ## Architecture Overview
-The system uses a J1939-like ID scheme with custom PF values. Devices claim an address using a network management procedure and exchange application messages. The CAN output engine applies GPIO actions based on matched PF/SA rules.
+The system uses a J1939-like ID scheme with custom PF values. Devices claim an address using a network management procedure and exchange application messages. The CAN output engine applies GPIO actions based on matched PF/SA rules. **The architecture now includes built-in safeguards against feedback loops and system lockups during heavy traffic conditions.**
 
 ```mermaid
 sequenceDiagram
@@ -156,7 +166,7 @@ WaitRetry --> Claiming : "re-attempt"
 - Purpose: Periodic status and statistics broadcast by devices.
 - PF: 0x30
 - PS: DA_BROADCAST (device broadcasts)
-- SA: Device’s current source address
+- SA: Device's current source address
 - Payload (8 bytes):
   - Byte 0: Online flag (0x00 offline, 0x01 online)
   - Byte 1: Seconds (LSB)
@@ -178,7 +188,7 @@ WaitRetry --> Claiming : "re-attempt"
 - Purpose: Configure a single axis mapping (joystick to solenoid).
 - PF: 0x24
 - PS: DA_BROADCAST (broadcast to all devices)
-- SA: Sender’s source address
+- SA: Sender's source address
 - Payload (8 bytes):
   - Byte 0: Axis index (0–15)
   - Byte 1: Source address (joystick SA, e.g., 0x21)
@@ -200,7 +210,7 @@ WaitRetry --> Claiming : "re-attempt"
 - Purpose: Blink LED or activate identification pattern.
 - PF: 0x22
 - PS: DA_BROADCAST or device SA
-- SA: Sender’s SA
+- SA: Sender's SA
 - Payload: None (DLC 0)
 - Behavior: Activates identification pattern for a fixed duration.
 
@@ -213,7 +223,7 @@ WaitRetry --> Claiming : "re-attempt"
 - Purpose: Assign a new fixed source address to a device.
 - PF: 0x23
 - PS: Target device SA
-- SA: Sender’s SA
+- SA: Sender's SA
 - Payload (1 byte):
   - Byte 0: New address (0x20–0xEF)
 - Behavior: Device validates address range, stores in NVS, and reboots.
@@ -228,7 +238,7 @@ WaitRetry --> Claiming : "re-attempt"
 - Purpose: Trigger GPIO actions based on CAN frames.
 - PF: Configured per rule (matchPF)
 - PS: Optional matchSA (0 means any SA)
-- SA: Sender’s SA
+- SA: Sender's SA
 - Payload: Depends on rule; typically ignored for GPIO control.
 - Behavior: Device applies GPIO action (toggle or momentary) when PF/SA match.
 
@@ -288,7 +298,7 @@ NextRule --> LoopRules
 - Purpose: Directly set solenoid PWM values.
 - PF: 0x21
 - PS: DA_BROADCAST
-- SA: Sender’s SA
+- SA: Sender's SA
 - Payload (8 bytes): One byte per channel (0–255), mapped to 12-bit output.
 
 **Section sources**
@@ -299,7 +309,7 @@ NextRule --> LoopRules
 - Purpose: Set LED color.
 - PF: 0x20
 - PS: DA_BROADCAST or device SA
-- SA: Sender’s SA
+- SA: Sender's SA
 - Payload (3 bytes): R, G, B (0–255).
 
 **Section sources**
@@ -311,7 +321,7 @@ NextRule --> LoopRules
 - Purpose: Retrieve axis configuration from a device.
 - PF: 0x25 (request), 0x26 (response)
 - PS: DA_BROADCAST (request) or device SA (response)
-- SA: Sender’s SA
+- SA: Sender's SA
 - Behavior: Requester sends PF_REQUEST_CONFIG; responder replies with PF_CONFIG_RESPONSE for each axis.
 
 **Section sources**
@@ -329,6 +339,68 @@ NextRule --> LoopRules
 - [ForwarderCAN.cpp:173-197](file://lib/ForwarderCAN/ForwarderCAN.cpp#L173-L197)
 - [ecu_motor_driver.cpp:234-244](file://src/ecu_motor_driver.cpp#L234-L244)
 - [ecu_joystick.cpp:132-141](file://src/ecu_joystick.cpp#L132-L141)
+
+## Reliability Improvements
+
+### Feedback Loop Prevention Mechanism
+**Updated** The system now includes comprehensive safeguards against feedback loops and system lockups during heavy bus load conditions.
+
+The reliability improvements center around a critical fix in the CAN message processing pipeline that prevents infinite loops when receiving large volumes of frames. The system implements a 30-frame processing limit mechanism to ensure stability under heavy traffic conditions.
+
+#### Hardware-Level Processing Optimization
+The ForwarderCAN class now uses direct TWAI hardware access in its loop() method to bypass the traditional receive() buffer mechanism that could cause feedback loops:
+
+```cpp
+// Drain TWAI hardware directly to avoid the push/pop feedback loop
+// that would occur if we called receive() here (receive() reads _rxBuf
+// first, and loop() pushes non-mgmt frames back into _rxBuf, causing
+// the same frame to be re-processed up to the count>30 guard every tick).
+twai_message_t rawMsg;
+int rxCount = 0;
+while (twai_receive(&rawMsg, 0) == ESP_OK) {
+    rxCount++;
+    if (rxCount > 30) break;  // prevent lockup under heavy bus load
+    // ... process frame ...
+}
+```
+
+#### Application-Level Processing Guards
+Both ECU implementations include identical protection mechanisms in their processCAN() functions:
+
+```cpp
+static void processCAN() {
+    CANMessage msg;
+    int count = 0;
+    while (g_can->receive(msg, 0)) {
+        count++;
+        if (count > 30) break;  // prevent lockup under heavy bus load
+        // ... process individual message types ...
+    }
+}
+```
+
+#### CAN Output Processing Safety
+The CAN output engine also implements the same safety mechanism to prevent system lockups when processing GPIO control rules triggered by CAN frames.
+
+### Heavy Bus Load Handling
+The system is designed to handle extreme traffic conditions gracefully:
+
+- **Frame Processing Limit**: Maximum 30 frames processed per iteration to prevent system overload
+- **Hardware Direct Access**: Bypasses buffer mechanisms for network management frames
+- **Automatic Recovery**: System continues processing even when encountering high traffic loads
+- **Timeout Protection**: All receive operations include appropriate timeouts to prevent blocking
+
+### System Stability Features
+- **Bus State Monitoring**: Automatic detection and recovery from bus-off conditions
+- **Error Count Tracking**: Comprehensive error monitoring for debugging and maintenance
+- **Graceful Degradation**: System continues operating with reduced functionality during heavy loads
+- **Memory Protection**: Ring buffer overflow protection prevents memory corruption
+
+**Section sources**
+- [ForwarderCAN.cpp:149-172](file://lib/ForwarderCAN/ForwarderCAN.cpp#L149-L172)
+- [ecu_motor_driver.cpp:248-254](file://src/ecu_motor_driver.cpp#L248-L254)
+- [ecu_joystick.cpp:133-138](file://src/ecu_joystick.cpp#L133-L138)
+- [can_output.cpp:29-49](file://src/can_output.cpp#L29-L49)
 
 ## Dependency Analysis
 ```mermaid
@@ -359,12 +431,16 @@ CO --> FCN
 - Heartbeat interval: ~1 second; adjust for latency tolerance.
 - CAN output momentary mode: Configurable duration; keep short for responsive control.
 - Address claiming: Timeout 250 ms; retries every 1000 ms up to 5 attempts; alternate address fallback uses NAME hash.
+- **Heavy bus load handling**: System automatically limits processing to 30 frames per iteration to prevent lockups.
+- **Memory protection**: Ring buffer size of 32 messages prevents memory overflow during high traffic.
+- **Hardware optimization**: Direct TWAI access bypasses buffer overhead for improved performance.
 
 **Section sources**
 - [ForwarderCAN.cpp:19-26](file://lib/ForwarderCAN/ForwarderCAN.cpp#L19-L26)
 - [ForwarderCAN.cpp:109-112](file://lib/ForwarderCAN/ForwarderCAN.cpp#L109-L112)
 - [ecu_motor_driver.cpp:330-346](file://src/ecu_motor_driver.cpp#L330-L346)
 - [ecu_joystick.cpp:226-231](file://src/ecu_joystick.cpp#L226-L231)
+- [ForwarderCAN.cpp:123-128](file://lib/ForwarderCAN/ForwarderCAN.cpp#L123-L128)
 
 ## Troubleshooting Guide
 - Device not claiming address:
@@ -379,12 +455,23 @@ CO --> FCN
 - PF_CAN_OUTPUT not triggering:
   - Confirm matchPF and matchSA in rules.
   - Ensure gpioPin is configured and mode is set.
+- **System lockup during heavy traffic**:
+  - **Updated** The system includes built-in protection against lockups with automatic frame limiting.
+  - Monitor TX/RX counters for unusual spikes in frame rates.
+  - Check for excessive broadcast traffic on the network.
+  - Verify that no device is flooding the bus with high-frequency messages.
+- **CAN bus stability issues**:
+  - **Updated** System now includes automatic bus state monitoring and recovery.
+  - Monitor bus error counters for persistent issues.
+  - Verify proper termination and wiring integrity.
+  - Check for electromagnetic interference sources.
 
 **Section sources**
 - [ForwarderCAN.cpp:92-119](file://lib/ForwarderCAN/ForwarderCAN.cpp#L92-L119)
 - [ecu_motor_driver.cpp:234-244](file://src/ecu_motor_driver.cpp#L234-L244)
 - [ForwarderConfig.cpp:119-127](file://lib/ForwarderConfig/ForwarderConfig.cpp#L119-L127)
 - [can_output.cpp:29-49](file://src/can_output.cpp#L29-L49)
+- [ForwarderCAN.cpp:110-124](file://lib/ForwarderCAN/ForwarderCAN.cpp#L110-L124)
 
 ## Conclusion
-ForwarderKE implements a J1939-like CAN protocol with custom PF values for device control and configuration. The protocol supports address claiming, broadcasting of heartbeats, joystick telemetry, solenoid control, LED color setting, device identification, dynamic axis configuration, and CAN-triggered GPIO actions. Adhering to the defined ID layout, PF assignments, and timing ensures robust inter-device communication.
+ForwarderKE implements a J1939-like CAN protocol with custom PF values for device control and configuration. The protocol supports address claiming, broadcasting of heartbeats, joystick telemetry, solenoid control, LED color setting, device identification, dynamic axis configuration, and CAN-triggered GPIO actions. **The recent reliability improvements ensure robust operation under heavy traffic conditions with built-in safeguards against feedback loops and system lockups.** Adhering to the defined ID layout, PF assignments, and timing ensures robust inter-device communication even in demanding network environments.

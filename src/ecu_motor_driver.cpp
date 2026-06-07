@@ -42,7 +42,7 @@ bool g_pca2Present = false;
 
 static NeoPixelBus<NeoGrbFeature, Neo800KbpsMethod> strip(1, WS2812_PIN);
 ForwarderCAN* g_can = nullptr;
-static ForwarderConfig cfgMgr("motorcfg");
+ForwarderConfig cfgMgr("motorcfg");
 
 MotorConfig g_motorCfg;
 uint16_t g_solenoidValues[MAX_AXIS_COUNT] = {0};
@@ -57,7 +57,9 @@ static uint32_t identifyTimer = 0;
 static bool identifyActive = false;
 
 uint16_t g_joyPots[256][3] = {{0}};
+uint8_t g_joyButtons[256] = {0};
 uint32_t g_joyUpdateTime[256] = {0};
+uint32_t g_joyButtonUpdateTime[256] = {0};
 CanOutputRule g_canOutputRules[MAX_CAN_OUTPUT_RULES];
 
 static const uint8_t ECU_NAME[8] = {
@@ -68,10 +70,10 @@ static const uint8_t ECU_NAME[8] = {
 
 static void setPWM(uint8_t channel, uint16_t value) {
     if (value > 4095) value = 4095;
-    if (channel < 8) {
+    if (channel < 16) {
         pca1.setPWM(channel, 0, value);
-    } else if (channel < 16 && g_pca2Present) {
-        pca2.setPWM(channel - 8, 0, value);
+    } else if (channel < 32 && g_pca2Present) {
+        pca2.setPWM(channel - 16, 0, value);
     }
 }
 
@@ -101,6 +103,7 @@ static void initPCA() {
 // Paired channel output: fwdCh and revCh get PWM values
 // For bidirectional axes: outputChannel = forward, outputChannel+1 = reverse
 // For unidirectional axes: only outputChannel is used
+// Invert flag swaps forward <-> reverse directions
 static void mapAxis(const AxisConfig& axis, uint16_t potValue, uint16_t& fwdCh, uint16_t& revCh) {
     fwdCh = 0;
     revCh = 0;
@@ -136,9 +139,41 @@ static void mapAxis(const AxisConfig& axis, uint16_t potValue, uint16_t& fwdCh, 
             fwdCh = ((uint16_t)pwm * 4095u) / 255u;
         }
     }
+    // Invert: swap forward and reverse channels
+    if (axis.isInverted()) {
+        uint16_t tmp = fwdCh;
+        fwdCh = revCh;
+        revCh = tmp;
+    }
 }
 
 static uint32_t lastAxisDebug = 0;
+
+// Evaluate whether an axis's button gate condition is met
+static bool isAxisGateActive(const AxisConfig& axis) {
+    switch (axis.buttonGate) {
+        case BUTTON_GATE_BTN1_PRESSED:
+            return (g_joyButtons[axis.sourceAddress] & 0x01) != 0;
+        case BUTTON_GATE_BTN1_RELEASED:
+            return (g_joyButtons[axis.sourceAddress] & 0x01) == 0;
+        case BUTTON_GATE_NONE:
+        default:
+            return true;  // No gating, always active
+    }
+}
+
+static void zeroAxisChannels(const AxisConfig& axis) {
+    uint8_t chFwd = axis.outputChannel;
+    uint8_t chRev = axis.outputChannel + 1;
+    if (g_solenoidValues[chFwd] != 0) {
+        g_solenoidValues[chFwd] = 0;
+        setPWM(chFwd, 0);
+    }
+    if (axis.isBidirectional() && g_solenoidValues[chRev] != 0) {
+        g_solenoidValues[chRev] = 0;
+        setPWM(chRev, 0);
+    }
+}
 
 static void updateAxes() {
     bool debugPrint = (millis() - lastAxisDebug >= 1000);
@@ -146,12 +181,24 @@ static void updateAxes() {
     for (int i = 0; i < MAX_AXIS_COUNT; i++) {
         const AxisConfig& axis = g_motorCfg.axes[i];
         if (!axis.isEnabled() || axis.sourceAddress == 0) continue;
+
+        // Button gate check: if gate is inactive, zero outputs and skip
+        if (!isAxisGateActive(axis)) {
+            zeroAxisChannels(axis);
+            if (debugPrint) {
+                Serial.printf("[Axis %d] src=0x%02X pot%d ch=%d GATE_INACTIVE (btnGate=%d btn=0x%02X)\n",
+                    i, axis.sourceAddress, axis.potIndex, axis.outputChannel,
+                    axis.buttonGate, g_joyButtons[axis.sourceAddress]);
+            }
+            continue;
+        }
+
         uint16_t pot = g_joyPots[axis.sourceAddress][axis.potIndex];
         uint32_t lastUpdate = g_joyUpdateTime[axis.sourceAddress];
         if (debugPrint) {
-            Serial.printf("[Axis %d] src=0x%02X pot%d=%d ch=%d bidir=%d upd=%lums\n",
+            Serial.printf("[Axis %d] src=0x%02X pot%d=%d ch=%d bidir=%d gate=%d upd=%lums\n",
                 i, axis.sourceAddress, axis.potIndex, pot, axis.outputChannel,
-                axis.isBidirectional()?1:0,
+                axis.isBidirectional()?1:0, axis.buttonGate,
                 lastUpdate > 0 ? (millis() - lastUpdate) : 99999UL);
         }
         if (millis() - lastUpdate < 1000) {
@@ -169,16 +216,7 @@ static void updateAxes() {
             }
         } else {
             // Joystick timed out, zero both channels
-            uint8_t chFwd = axis.outputChannel;
-            uint8_t chRev = axis.outputChannel + 1;
-            if (g_solenoidValues[chFwd] != 0) {
-                g_solenoidValues[chFwd] = 0;
-                setPWM(chFwd, 0);
-            }
-            if (axis.isBidirectional() && g_solenoidValues[chRev] != 0) {
-                g_solenoidValues[chRev] = 0;
-                setPWM(chRev, 0);
-            }
+            zeroAxisChannels(axis);
         }
     }
 }
@@ -236,6 +274,13 @@ static void processCAN() {
                     lastSolenoidUpdate = millis();
                     blinkFast = true;
                     blinkTimer = millis();
+                }
+                break;
+            }
+            case PF_JOYSTICK_BUTTONS: {
+                if (msg.len >= 1 && sa < 256) {
+                    g_joyButtons[sa] = msg.data[0];
+                    g_joyButtonUpdateTime[sa] = millis();
                 }
                 break;
             }
