@@ -48,6 +48,8 @@ MotorConfig g_motorCfg;
 uint16_t g_solenoidValues[MAX_AXIS_COUNT] = {0};
 static uint32_t lastSolenoidUpdate = 0;
 static uint32_t lastHeartbeat = 0;
+static bool g_outputDirty = false;
+static uint32_t lastOutputBroadcast = 0;
 static uint32_t lastLedUpdate = 0;
 
 static uint8_t ledR = 0, ledG = 0, ledB = 20;
@@ -77,10 +79,30 @@ static void setPWM(uint8_t channel, uint16_t value) {
     }
 }
 
-static void allOff() {
+// Track last written PWM values for change detection
+static uint16_t lastPWM[32] = {0};
+static uint32_t lastPWMDebug = 0;
+static void setPWMTracked(uint8_t channel, uint16_t value) {
+    if (channel < 32 && value != lastPWM[channel]) {
+        lastPWM[channel] = value;
+        g_outputDirty = true;
+        if (millis() - lastPWMDebug >= 2000) {
+            lastPWMDebug = millis();
+            Serial.print("[PWM] ");
+            for (int c = 0; c < 16; c++) {
+                if (lastPWM[c] > 0) Serial.printf("ch%d=%d ", c, lastPWM[c]);
+            }
+            Serial.println();
+        }
+    }
+    setPWM(channel, value);
+}
+
+static void allOff(const char* caller) {
+    Serial.printf("[PWM] allOff() called from %s\n", caller);
     for (int i = 0; i < MAX_AXIS_COUNT; i++) {
         g_solenoidValues[i] = 0;
-        setPWM(i, 0);
+        setPWMTracked(i, 0);
     }
 }
 
@@ -167,11 +189,11 @@ static void zeroAxisChannels(const AxisConfig& axis) {
     uint8_t chRev = axis.outputChannel + 1;
     if (g_solenoidValues[chFwd] != 0) {
         g_solenoidValues[chFwd] = 0;
-        setPWM(chFwd, 0);
+        setPWMTracked(chFwd, 0);
     }
     if (axis.isBidirectional() && g_solenoidValues[chRev] != 0) {
         g_solenoidValues[chRev] = 0;
-        setPWM(chRev, 0);
+        setPWMTracked(chRev, 0);
     }
 }
 
@@ -208,11 +230,11 @@ static void updateAxes() {
             uint8_t chRev = axis.outputChannel + 1;
             if (fwd != g_solenoidValues[chFwd]) {
                 g_solenoidValues[chFwd] = fwd;
-                setPWM(chFwd, fwd);
+                setPWMTracked(chFwd, fwd);
             }
             if (axis.isBidirectional() && rev != g_solenoidValues[chRev]) {
                 g_solenoidValues[chRev] = rev;
-                setPWM(chRev, rev);
+                setPWMTracked(chRev, rev);
             }
         } else {
             // Joystick timed out, zero both channels
@@ -271,7 +293,7 @@ static void processCAN() {
                     uint16_t val = msg.data[0] | ((uint16_t)msg.data[1] << 8);
                     g_joyPots[sa][potIdx] = val;
                     g_joyUpdateTime[sa] = millis();
-                    lastSolenoidUpdate = millis();
+                    lastSolenoidUpdate = millis();  // Refresh safety timer on new CAN data
                     blinkFast = true;
                     blinkTimer = millis();
                 }
@@ -289,7 +311,7 @@ static void processCAN() {
                     for (int i = 0; i < 8 && i < MAX_AXIS_COUNT; i++) {
                         uint16_t val = ((uint16_t)msg.data[i] * 4095u) / 255u;
                         g_solenoidValues[i] = val;
-                        setPWM(i, val);
+                        setPWMTracked(i, val);
                     }
                     lastSolenoidUpdate = millis();
                     blinkFast = true;
@@ -417,9 +439,20 @@ void ecu_setup() {
     cfgMgr.loadMotorConfig(g_motorCfg);
     cfgMgr.loadCanOutputRules(g_canOutputRules);
     autoConfigDefaults();
+    // Dump loaded config to serial
+    Serial.println("[MotorDriver] Loaded axis config:");
+    for (int i = 0; i < MAX_AXIS_COUNT; i++) {
+        const AxisConfig& a = g_motorCfg.axes[i];
+        if (a.flags) {
+            Serial.printf("[MotorDriver]   axis%d src=0x%02X pot=%d ch=%d db=%d-%d pwm=%d-%d flags=%d inv=%d gate=%d\n",
+                i, a.sourceAddress, a.potIndex, a.outputChannel,
+                a.deadbandMin, a.deadbandMax, a.pwmMin, a.pwmMax,
+                a.flags, a.isInverted()?1:0, a.buttonGate);
+        }
+    }
     Serial.println("[MotorDriver] Initializing PCA9685...");
     initPCA();
-    allOff();
+    allOff("boot");
     Serial.println("[MotorDriver] Initializing CAN...");
 
     // GPIO loopback test: MCP2562 loops TXD→RXD internally
@@ -501,9 +534,10 @@ void ecu_loop() {
     }
     if (now - lastSolenoidUpdate > SAFETY_TIMEOUT_MS) {
         if (lastSolenoidUpdate != 0) {
-            Serial.printf("[SAFETY] Timeout %dms, all outputs OFF\n", SAFETY_TIMEOUT_MS);
-            allOff();
-            lastSolenoidUpdate = 0;
+            Serial.printf("[SAFETY] Timeout %lums since last update, all outputs OFF\n",
+                (unsigned long)(now - lastSolenoidUpdate));
+            allOff("safety");
+            lastSolenoidUpdate = 0;  // Prevent re-firing until fresh CAN data arrives
         }
     }
     if (blinkFast && (now - blinkTimer > 100)) {
@@ -513,6 +547,32 @@ void ecu_loop() {
         lastHeartbeat = now;
         if (g_can->isOnline()) {
             sendHeartbeat();
+        }
+    }
+    // Broadcast PCA9685 output values when PWM changes (rate-limited to 20Hz max)
+    if (g_outputDirty && (now - lastOutputBroadcast >= 50)) {
+        lastOutputBroadcast = now;
+        g_outputDirty = false;
+        // Message 1: axes 0-3 (channels 0-7)
+        {
+            uint8_t data[8];
+            for (int i = 0; i < 4; i++) {
+                int16_t val = (int16_t)g_solenoidValues[i * 2] - (int16_t)g_solenoidValues[i * 2 + 1];
+                data[i * 2] = (uint8_t)(val & 0xFF);
+                data[i * 2 + 1] = (uint8_t)((val >> 8) & 0xFF);
+            }
+            g_can->sendBroadcast(PF_MOTOR_OUTPUT1, data, 8, 6);
+        }
+        // Message 2: axes 4-7 (channels 8-15)
+        {
+            uint8_t data[8];
+            for (int i = 0; i < 4; i++) {
+                int idx = 4 + i;
+                int16_t val = (int16_t)g_solenoidValues[idx * 2] - (int16_t)g_solenoidValues[idx * 2 + 1];
+                data[i * 2] = (uint8_t)(val & 0xFF);
+                data[i * 2 + 1] = (uint8_t)((val >> 8) & 0xFF);
+            }
+            g_can->sendBroadcast(PF_MOTOR_OUTPUT2, data, 8, 6);
         }
     }
     updateLED();

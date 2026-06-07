@@ -15,6 +15,14 @@
 - [README.md](file://README.md)
 </cite>
 
+## Update Summary
+**Changes Made**
+- Added documentation for the new button gate system with three operational modes
+- Documented the FLAG_AXIS_INVERT constant and inversion flag functionality
+- Updated PWM mapping algorithm to include button gate evaluation
+- Enhanced axis configuration documentation with new button gate options
+- Added practical examples for button gate configuration and inversion usage
+
 ## Table of Contents
 1. [Introduction](#introduction)
 2. [Project Structure](#project-structure)
@@ -28,7 +36,7 @@
 10. [Appendices](#appendices)
 
 ## Introduction
-This document describes the Motor Driver ECU implementation responsible for controlling solenoids via PCA9685 PWM drivers and managing CAN bus communications. It covers PCA9685 initialization and dual-controller support, the PWM mapping algorithm for converting joystick inputs to solenoid actuation signals (including bidirectional axes and deadband handling), the safety timeout mechanism, LED status indicators, heartbeat messages, address claiming, configuration persistence, and CAN message processing for joystick data, solenoid commands, and LED control. Practical examples and troubleshooting guidance are included for common issues such as solenoid sticking and communication failures.
+This document describes the Motor Driver ECU implementation responsible for controlling solenoids via PCA9685 PWM drivers and managing CAN bus communications. It covers PCA9685 initialization and dual-controller support, the PWM mapping algorithm for converting joystick inputs to solenoid actuation signals (including bidirectional axes, deadband handling, and button gate control), the safety timeout mechanism, LED status indicators, heartbeat messages, address claiming, configuration persistence, and CAN message processing for joystick data, solenoid commands, and LED control. The system now includes advanced features like button-gated axis control with three operational modes and channel inversion for forward/reverse swapping. Practical examples and troubleshooting guidance are included for common issues such as solenoid sticking and communication failures.
 
 ## Project Structure
 The project is organized around an ESP32-S3-based firmware with separate ECUs for motor control and joystick input. The build system uses PlatformIO environments to configure hardware pins, addresses, and features per ECU type.
@@ -62,7 +70,7 @@ H["README.md<br/>Overview & pinout"] -.-> G
 
 ## Core Components
 - PCA9685 PWM controllers: Two PCA9685 chips (primary and optional secondary) drive up to 16 channels (8 per PCA9685). Initialization sets oscillator frequency and PWM frequency, with automatic detection of the second controller.
-- Joystick-to-solenoid mapping: Axis configuration defines source joystick address, pot index, output channel, deadbands, and PWM range. The mapping algorithm converts 10-bit joystick values to 12-bit PWM values with bidirectional support and deadband logic.
+- Advanced joystick-to-solenoid mapping: Axis configuration defines source joystick address, pot index, output channel, deadbands, PWM range, button gate modes, and inversion flags. The mapping algorithm converts 10-bit joystick values to 12-bit PWM values with bidirectional support, deadband logic, and button gate evaluation.
 - Safety timeout: If no joystick or solenoid command is received within the configured timeout, all solenoids are turned off.
 - LED status indicator: Single WS2812 LED indicates connection status, activity, identification mode, and custom colors.
 - Heartbeat messages: Periodic broadcast of system health metrics and CAN statistics.
@@ -70,7 +78,7 @@ H["README.md<br/>Overview & pinout"] -.-> G
 
 **Section sources**
 - [ecu_motor_driver.cpp:85-99](file://src/ecu_motor_driver.cpp#L85-L99)
-- [ecu_motor_driver.cpp:101-135](file://src/ecu_motor_driver.cpp#L101-L135)
+- [ecu_motor_driver.cpp:101-148](file://src/ecu_motor_driver.cpp#L101-L148)
 - [ecu_motor_driver.cpp:332-337](file://src/ecu_motor_driver.cpp#L332-L337)
 - [ecu_motor_driver.cpp:153-182](file://src/ecu_motor_driver.cpp#L153-L182)
 - [ecu_motor_driver.cpp:277-288](file://src/ecu_motor_driver.cpp#L277-L288)
@@ -78,7 +86,7 @@ H["README.md<br/>Overview & pinout"] -.-> G
 - [ForwarderConfig.h:64-92](file://lib/ForwarderConfig/ForwarderConfig.h#L64-L92)
 
 ## Architecture Overview
-The Motor Driver ECU integrates CAN communication, configuration management, PCA9685 PWM control, and status reporting. It receives joystick data and solenoid commands over CAN, applies mapping rules, drives solenoids, and periodically reports health metrics.
+The Motor Driver ECU integrates CAN communication, configuration management, PCA9685 PWM control, and status reporting. It receives joystick data and solenoid commands over CAN, applies mapping rules with button gate evaluation, drives solenoids, and periodically reports health metrics.
 
 ```mermaid
 graph TB
@@ -89,13 +97,15 @@ LED["WS2812 LED"]
 CFG["ForwarderConfig<br/>NVS persistence"]
 CAN["ForwarderCAN<br/>J1939-like framing"]
 OUT["can_output.cpp<br/>GPIO rules"]
-end
+BG["Button Gate System<br/>BTN1 control"]
+END
 JS["Joystick ECUs<br/>ecu_joystick.cpp"] --> CAN
 CAN --> M
 M --> PCA
 M --> LED
 M --> CFG
 M --> OUT
+M --> BG
 ```
 
 **Diagram sources**
@@ -143,17 +153,21 @@ end
 - [ecu_motor_driver.cpp:85-99](file://src/ecu_motor_driver.cpp#L85-L99)
 - [platformio.ini:26-29](file://platformio.ini#L26-L29)
 
-### PWM Mapping Algorithm: Joystick to Solenoid Signals
+### Advanced PWM Mapping Algorithm: Joystick to Solenoid Signals with Button Gate Control
 The mapping converts 10-bit joystick values to 12-bit PWM values with support for:
 - Bidirectional axes: separate forward and reverse mappings with deadband logic.
 - Deadband calculation: linear scaling from raw ADC to PWM with clamping.
 - Non-bidirectional axes: single-direction mapping above deadband max.
+- **New**: Button gate evaluation: axes can be gated based on joystick button state with three modes.
+- **New**: Channel inversion: forward and reverse channels can be swapped for different control configurations.
 
 ```mermaid
 flowchart TD
 Start(["mapAxis(axis, potValue)"]) --> CheckEnabled{"Axis enabled?"}
 CheckEnabled --> |No| OutZero["Return 0"]
-CheckEnabled --> |Yes| IsBi{"Bidirectional?"}
+CheckEnabled --> |Yes| CheckGate{"Button gate active?"}
+CheckGate --> |No| OutZero
+CheckGate --> |Yes| IsBi{"Bidirectional?"}
 IsBi --> |Yes| TestNeg["potValue < deadbandMin?"]
 TestNeg --> |Yes| NegMap["Reverse mapping:<br/>scale (deadbandMin - potValue) to 0..255,<br/>then scale to pwmMin..pwmMax,<br/>then to 0..4095"]
 TestNeg --> |No| TestPos["potValue > deadbandMax?"]
@@ -162,18 +176,65 @@ TestPos --> |No| Deadband["Inside deadband -> 0"]
 IsBi --> |No| TestNorm["potValue <= deadbandMax?"]
 TestNorm --> |Yes| OutZero
 TestNorm --> |No| NormMap["Scale (potValue - deadbandMax)<br/>to 0..255, then to pwmMin..pwmMax,<br/>then to 0..4095"]
-NegMap --> Out["Return PWM value"]
-PosMap --> Out
-Deadband --> Out
-NormMap --> Out
+NegMap --> CheckInvert{"Axis inverted?"}
+PosMap --> CheckInvert
+Deadband --> CheckInvert
+NormMap --> CheckInvert
+CheckInvert --> |Yes| Swap["Swap forward and reverse channels"]
+CheckInvert --> |No| Out["Return PWM value(s)"]
+Swap --> Out
 ```
 
 **Diagram sources**
-- [ecu_motor_driver.cpp:101-135](file://src/ecu_motor_driver.cpp#L101-L135)
+- [ecu_motor_driver.cpp:101-148](file://src/ecu_motor_driver.cpp#L101-L148)
+- [ecu_motor_driver.cpp:152-163](file://src/ecu_motor_driver.cpp#L152-L163)
 
 **Section sources**
-- [ecu_motor_driver.cpp:101-135](file://src/ecu_motor_driver.cpp#L101-L135)
-- [ForwarderConfig.h:41-57](file://lib/ForwarderConfig/ForwarderConfig.h#L41-L57)
+- [ecu_motor_driver.cpp:101-148](file://src/ecu_motor_driver.cpp#L101-L148)
+- [ecu_motor_driver.cpp:152-163](file://src/ecu_motor_driver.cpp#L152-L163)
+- [ForwarderConfig.h:25-27](file://lib/ForwarderConfig/ForwarderConfig.h#L25-L27)
+
+### Button Gate System: Three Operational Modes
+The button gate system provides three modes of axis activation controlled by joystick button state:
+- **Always Active (None)**: Axes operate regardless of button state.
+- **BTN1 Pressed**: Axes only activate when BTN1 is pressed (bit 0 of joystick buttons).
+- **BTN1 Released**: Axes only activate when BTN1 is not pressed (inverted logic).
+
+The system evaluates button gate conditions before applying PWM mapping and zeros outputs when gates are inactive.
+
+```mermaid
+flowchart TD
+GateCheck["isAxisGateActive(axis)"] --> Mode{"Button Gate Mode"}
+Mode --> |None| AlwaysActive["Return true (always active)"]
+Mode --> |BTN1 Pressed| BtnPressed["Check if BTN1 bit is set"]
+Mode --> |BTN1 Released| BtnReleased["Check if BTN1 bit is NOT set"]
+BtnPressed --> Result1{"BTN1 pressed?"}
+Result1 --> |Yes| Active["Return true"]
+Result1 --> |No| Inactive["Return false"]
+BtnReleased --> Result2{"BTN1 released?"}
+Result2 --> |Yes| Active
+Result2 --> |No| Inactive
+Inactive --> ZeroOutputs["zeroAxisChannels()"]
+```
+
+**Diagram sources**
+- [ecu_motor_driver.cpp:152-163](file://src/ecu_motor_driver.cpp#L152-L163)
+- [ecu_motor_driver.cpp:165-176](file://src/ecu_motor_driver.cpp#L165-L176)
+
+**Section sources**
+- [ecu_motor_driver.cpp:152-163](file://src/ecu_motor_driver.cpp#L152-L163)
+- [ecu_motor_driver.cpp:165-176](file://src/ecu_motor_driver.cpp#L165-L176)
+- [ForwarderConfig.h:20-23](file://lib/ForwarderConfig/ForwarderConfig.h#L20-L23)
+
+### Channel Inversion: Forward/Reverse Channel Swapping
+The FLAG_AXIS_INVERT constant enables channel inversion for axes that need different control characteristics:
+- When enabled, forward and reverse channels are swapped after PWM calculation.
+- This allows joystick direction to be reversed without changing physical wiring.
+- Particularly useful for applications where the mechanical setup requires opposite control direction.
+
+**Section sources**
+- [ecu_motor_driver.cpp:142-147](file://src/ecu_motor_driver.cpp#L142-L147)
+- [ForwarderConfig.h:27](file://lib/ForwarderConfig/ForwarderConfig.h#L27)
 
 ### Safety Timeout Mechanism
 If no joystick or solenoid command is received within the safety timeout, the system turns off all solenoids and resets the update timer.
@@ -303,17 +364,19 @@ end
 
 ### Practical Examples
 
-#### Axis Configuration Example
+#### Axis Configuration Example with Button Gates
 - Source address: joystick SA (e.g., 0x21)
 - Pot index: 0 for X-axis, 1 for Y-axis, 2 for Z-axis
 - Output channel: 0–15 (first PCA9685 channels 0–7; second PCA9685 channels 0–7 if present)
 - Deadband min/max: ADC thresholds (0–1023) mapped from 0–255 in configuration
 - PWM min/max: 0–255 mapped to 0–4095 for 12-bit output
+- **New**: Button gate: 0=None, 1=BTN1 pressed, 2=BTN1 released
+- **New**: Inversion flag: swap forward/reverse channels for different control direction
 
 These are stored persistently and applied during mapping.
 
 **Section sources**
-- [ForwarderConfig.h:41-57](file://lib/ForwarderConfig/ForwarderConfig.h#L41-L57)
+- [ForwarderConfig.h:41-65](file://lib/ForwarderConfig/ForwarderConfig.h#L41-L65)
 - [ecu_motor_driver.cpp:137-151](file://src/ecu_motor_driver.cpp#L137-L151)
 
 #### PWM Frequency Settings
@@ -327,6 +390,7 @@ These are stored persistently and applied during mapping.
 - Solenoid sticking:
   - Verify safety timeout is not triggering by ensuring joystick or solenoid commands are received regularly.
   - Confirm mapping deadband settings are appropriate for the joystick range.
+  - **New**: Check button gate settings if axes are unexpectedly inactive.
 - Communication failures:
   - Check CAN bus wiring and termination.
   - Confirm address claiming succeeded and the device is online.
@@ -335,6 +399,10 @@ These are stored persistently and applied during mapping.
   - Blinking red indicates offline state.
   - Fast blinking indicates recent activity.
   - Identification mode toggles white periodically.
+- **New**: Button gate troubleshooting:
+  - Verify joystick button connections and debouncing.
+  - Check that button state is being transmitted correctly.
+  - Test different button gate modes to isolate issues.
 
 **Section sources**
 - [ecu_motor_driver.cpp:332-337](file://src/ecu_motor_driver.cpp#L332-L337)
@@ -373,8 +441,7 @@ JS --> PIO
 - CAN message processing is event-driven; keep payload sizes minimal to reduce overhead.
 - LED updates are throttled to ~20 Hz to avoid excessive CPU usage.
 - Safety timeout prevents indefinite actuation; tune timeout based on application needs.
-
-[No sources needed since this section provides general guidance]
+- **New**: Button gate evaluation adds minimal computational overhead but provides critical safety and control features.
 
 ## Troubleshooting Guide
 - CAN initialization failure:
@@ -383,8 +450,13 @@ JS --> PIO
   - Address claiming state machine handles arbitration; check logs for claiming attempts and state transitions.
 - Stuck solenoids:
   - Ensure joystick commands are being received; otherwise, the safety timeout will turn them off.
+  - **New**: Check if button gates are preventing activation.
 - LED not responding:
   - Confirm WS2812 pin configuration matches hardware and that the device is powered.
+- **New**: Button gate issues:
+  - Verify joystick button wiring and pull-up resistors.
+  - Check button debounce timing and state transmission.
+  - Test with different button gate modes to isolate problems.
 
 **Section sources**
 - [ecu_motor_driver.cpp:306-316](file://src/ecu_motor_driver.cpp#L306-L316)
@@ -393,9 +465,7 @@ JS --> PIO
 - [platformio.ini:25](file://platformio.ini#L25)
 
 ## Conclusion
-The Motor Driver ECU provides a robust, configurable solution for solenoid control via PCA9685 PWM drivers, integrated with a J1939-like CAN protocol. Its features include bidirectional axis mapping with deadband handling, automatic safety shutoff, status LEDs, periodic heartbeats, address claiming, and persistent configuration. The documented APIs and examples enable straightforward setup, tuning, and maintenance.
-
-[No sources needed since this section summarizes without analyzing specific files]
+The Motor Driver ECU provides a robust, configurable solution for solenoid control via PCA9685 PWM drivers, integrated with a J1939-like CAN protocol. Its features include bidirectional axis mapping with deadband handling, automatic safety shutoff, status LEDs, periodic heartbeats, address claiming, and persistent configuration. The recent enhancements include a sophisticated button gate system with three operational modes and channel inversion capabilities, providing enhanced safety, flexibility, and control precision for complex applications.
 
 ## Appendices
 
@@ -413,3 +483,19 @@ The Motor Driver ECU provides a robust, configurable solution for solenoid contr
 **Section sources**
 - [README.md:29-42](file://README.md#L29-L42)
 - [ForwarderCAN.h:38-50](file://lib/ForwarderCAN/ForwarderCAN.h#L38-L50)
+
+### Axis Configuration Flags Reference
+- **FLAG_AXIS_ENABLED (0x01)**: Enables axis mapping and control
+- **FLAG_AXIS_BIDIRECTIONAL (0x02)**: Uses paired channels for forward/reverse control
+- **FLAG_AXIS_INVERT (0x04)**: Swaps forward and reverse channels after PWM calculation
+
+**Section sources**
+- [ForwarderConfig.h:25-27](file://lib/ForwarderConfig/ForwarderConfig.h#L25-L27)
+
+### Button Gate Modes Reference
+- **BUTTON_GATE_NONE (0)**: Axis always active regardless of button state
+- **BUTTON_GATE_BTN1_PRESSED (1)**: Axis active only when BTN1 is pressed
+- **BUTTON_GATE_BTN1_RELEASED (2)**: Axis active only when BTN1 is not pressed
+
+**Section sources**
+- [ForwarderConfig.h:20-23](file://lib/ForwarderConfig/ForwarderConfig.h#L20-L23)

@@ -48,6 +48,8 @@
 #define PF_REQUEST_CONFIG           0x25
 #define PF_CONFIG_RESPONSE          0x26
 #define PF_HEARTBEAT                0x30
+#define PF_MOTOR_OUTPUT1            0x31
+#define PF_MOTOR_OUTPUT2            0x32
 
 // Broadcast destination address
 #define DA_BROADCAST                0xFF

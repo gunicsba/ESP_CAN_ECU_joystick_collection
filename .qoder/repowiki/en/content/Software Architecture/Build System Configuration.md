@@ -21,11 +21,9 @@
 
 ## Update Summary
 **Changes Made**
-- Added new ESP32-S3 target environments with USB-CDC enabled support
-- Introduced UART-only variants for ESP32-S3 without USB-CDC
-- Enhanced dual PCA9685 I2C addressing support for expanded hardware capabilities
-- Updated build environment matrix to include new S3 variants
-- Modified default environments to prioritize ESP32-S3 targets
+- Updated upload speed configuration from 115200 to 460800 baud for ESP32-S3 UART-only environment
+- Enhanced development workflow documentation to reflect improved flashing performance
+- Updated troubleshooting section to include upload speed considerations
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -50,7 +48,7 @@ graph TB
 PIO["platformio.ini<br/>Environments & Flags"]
 SRC_MAIN["src/main.cpp<br/>Entry point"]
 ENV_MD_S3["env:motor_driver_s3<br/>ESP32-S3 + USB-CDC"]
-ENV_MD_S3_UART["env:motor_driver_s3_uart<br/>ESP32-S3 + UART-only"]
+ENV_MD_S3_UART["env:motor_driver_s3_uart<br/>ESP32-S3 + UART-only<br/>Upload Speed: 460800 baud"]
 ENV_MD_LEG["env:motor_driver<br/>Legacy ESP32"]
 ENV_J1["env:joystick1<br/>ESP32 + Joystick 1"]
 ENV_J2["env:joystick2<br/>ESP32 + Joystick 2"]
@@ -121,7 +119,7 @@ CI --> ENV_J2O
 - [.github/workflows/build.yml:1-81](file://.github/workflows/build.yml#L1-L81)
 
 ## Architecture Overview
-The build system centers on PlatformIO environments that inject compile-time flags to choose the ECU type and board-specific pin assignments. The entry point conditionally includes the appropriate ECU module. OTA-enabled environments add a Wi-Fi AP and web server for firmware updates. The CI pipeline builds all environments and, on tag pushes, packages firmware binaries into a GitHub Release. The new ESP32-S3 variants offer enhanced USB-CDC support and flexible UART configurations for different deployment scenarios.
+The build system centers on PlatformIO environments that inject compile-time flags to choose the ECU type and board-specific pin assignments. The entry point conditionally includes the appropriate ECU module. OTA-enabled environments add a Wi-Fi AP and web server for firmware updates. The CI pipeline builds all environments and, on tag pushes, packages firmware binaries into a GitHub Release. The new ESP32-S3 variants offer enhanced USB-CDC support and flexible UART configurations for different deployment scenarios, with optimized upload speeds for improved development workflow.
 
 ```mermaid
 sequenceDiagram
@@ -138,7 +136,7 @@ PIO->>Src : Compile with selected ECU flags
 Src->>Lib : Link ForwarderCAN, ForwarderConfig
 Lib-->>Src : Symbols resolved
 Src-->>FW : Produce firmware.bin
-Dev-->>FW : Upload via serial or OTA
+Dev-->>FW : Upload via serial (460800 baud for UART-only)
 ```
 
 **Diagram sources**
@@ -168,7 +166,7 @@ Dev-->>FW : Upload via serial or OTA
   - Selects motor driver ECU without USB-CDC
   - Uses standard ESP32-S3 DevKit C-1 board
   - Same pin assignments as S3 variant but without USB-CDC
-  - Upload speed set to 115200 for serial flashing
+  - Upload speed set to 460800 baud for significantly faster serial flashing
 - **Legacy ESP32** (`motor_driver`):
   - Traditional motor driver ECU for T-CAN boards
   - Uses ESP32 DevKit with legacy pin assignments
@@ -191,7 +189,7 @@ Practical usage examples:
 - Build joystick 2: `pio run -e joystick2`
 - Build OTA motor driver (S3): `pio run -e motor_driver_s3_ota`
 
-**Updated** Added new ESP32-S3 target environments with USB-CDC and UART-only variants, plus dual PCA9685 I2C addressing support
+**Updated** Enhanced upload speed configuration for ESP32-S3 UART-only environment from 115200 to 460800 baud, providing significantly faster development workflow
 
 **Section sources**
 - [platformio.ini:17-142](file://platformio.ini#L17-L142)
@@ -240,7 +238,7 @@ Build --> End
   - Safety timeout for solenoid outputs
 - **ESP32-S3 UART-Only Variant** (`motor_driver_s3_uart`):
   - Same as S3 variant but without USB-CDC support
-  - Upload speed set to 115200 for serial flashing
+  - Upload speed set to 460800 baud for significantly faster serial flashing
 - **Legacy ESP32 Variant** (`motor_driver`):
   - Traditional pin assignments for T-CAN boards
   - CAN TX/RX pins, onboard WS2812 LED pin, dual PCA9685 I2C pins and addresses
@@ -262,7 +260,7 @@ Board and framework:
   - ESP32-S3 variants override board to specific models
   - Joystick environments override board to esp32dev
 
-**Updated** Added new ESP32-S3 target environments with USB-CDC and UART-only variants, plus dual PCA9685 I2C addressing support
+**Updated** Enhanced upload speed configuration for ESP32-S3 UART-only environment from 115200 to 460800 baud
 
 **Section sources**
 - [platformio.ini:4-142](file://platformio.ini#L4-L142)
@@ -299,11 +297,11 @@ class MotorDriver {
 +ecu_setup() void
 +ecu_loop() void
 -initPCA() void
--mapAxis(axis, potValue) uint16
--processCAN() void
--updateAxes() void
--updateLED() void
--sendHeartbeat() void
++mapAxis(axis, potValue) uint16
++processCAN() void
++updateAxes() void
++updateLED() void
++sendHeartbeat() void
 }
 class DualPCA9685 {
 +detectPCA9685() bool
@@ -349,11 +347,11 @@ class Joystick {
 +ecu_setup() void
 +ecu_loop() void
 -readInputs() void
--updateLED() void
--processCAN() void
--sendPot(pf, value) void
--sendButtons() void
--sendHeartbeat() void
++updateLED() void
++processCAN() void
++sendPot(pf, value) void
++sendButtons() void
++sendHeartbeat() void
 }
 Joystick --> ForwarderCAN : "uses"
 Joystick --> ForwarderConfig : "uses"
@@ -408,7 +406,7 @@ AP-->>Host : AP disconnects after reboot
 - **Board selection per environment**:
   - **Base**: esp32-s3-devkitc-1
   - **ESP32-S3 USB-CDC**: esp32s3box with 8MB flash partition
-  - **ESP32-S3 UART-only**: esp32-s3-devkitc-1
+  - **ESP32-S3 UART-only**: esp32-s3-devkitc-1 with 460800 baud upload speed
   - **Legacy**: esp32dev
 - Libraries:
   - Adafruit PWM Servo Driver Library
@@ -417,7 +415,7 @@ AP-->>Host : AP disconnects after reboot
   - ForwarderCAN: J1939-like 29-bit ID layout, PF definitions, address claiming, send/receive helpers
   - ForwarderConfig: NVS-backed configuration for axes and CAN output rules
 
-**Updated** Added new ESP32-S3 board configurations with different flash partitions and USB-CDC support
+**Updated** Enhanced upload speed configuration for ESP32-S3 UART-only environment from 115200 to 460800 baud
 
 **Section sources**
 - [platformio.ini:4-142](file://platformio.ini#L4-L142)
@@ -493,6 +491,7 @@ Legacy_Board --> J1
 - **ESP32-S3 USB-CDC**: Provides faster development workflow with USB serial support.
 - **Dual PCA9685**: Enables 16-channel PWM output for expanded hardware capabilities.
 - **I2C Locking Disabled**: Improves I2C performance for multiple PCA9685 controllers.
+- **Enhanced Upload Speed**: ESP32-S3 UART-only environment now uses 460800 baud upload speed, significantly reducing firmware flashing times during development compared to the previous 115200 baud rate.
 
 ## Troubleshooting Guide
 Common build issues and resolutions:
@@ -508,6 +507,9 @@ Common build issues and resolutions:
 - **UART-Only vs USB-CDC Confusion**:
   - Symptom: Unexpected serial communication behavior
   - Fix: Choose appropriate environment - motor_driver_s3 for USB-CDC, motor_driver_s3_uart for pure UART
+- **Upload Speed Issues**:
+  - Symptom: Slow firmware flashing or upload failures
+  - Fix: Use motor_driver_s3_uart environment for 460800 baud upload speed; ensure serial port settings match the selected environment
 - Incorrect board selection:
   - Symptom: Pin conflicts or missing pins
   - Fix: Ensure the environment's board matches your hardware; ESP32-S3 variants use different boards than legacy ESP32
@@ -521,7 +523,7 @@ Common build issues and resolutions:
   - Symptom: Upload endpoint returns an error
   - Fix: Confirm the uploaded file is a valid firmware binary produced by the build; verify AP connectivity and mDNS resolution
 
-**Updated** Added troubleshooting guidance for new ESP32-S3 variants and dual PCA9685 features
+**Updated** Added troubleshooting guidance for enhanced upload speed configuration and upload speed-related issues
 
 **Section sources**
 - [src/main.cpp:15-17](file://src/main.cpp#L15-L17)
@@ -530,7 +532,7 @@ Common build issues and resolutions:
 - [README.md:147-166](file://README.md#L147-L166)
 
 ## Conclusion
-The ForwarderKE build system leverages PlatformIO environments to cleanly separate ECU roles and deployment modes across both legacy ESP32 and new ESP32-S3 targets. Build flags determine the ECU type, hardware pin assignments, and board-specific configurations, while shared libraries encapsulate protocol and persistence concerns. The CI pipeline automates builds and releases across all eight environments, and OTA environments streamline field updates. The new ESP32-S3 variants provide enhanced USB-CDC support and flexible UART configurations, while dual PCA9685 I2C addressing expands hardware capabilities. Following the documented environments and troubleshooting steps ensures reliable builds and deployments across motor driver and joystick ECUs.
+The ForwarderKE build system leverages PlatformIO environments to cleanly separate ECU roles and deployment modes across both legacy ESP32 and new ESP32-S3 targets. Build flags determine the ECU type, hardware pin assignments, and board-specific configurations, while shared libraries encapsulate protocol and persistence concerns. The CI pipeline automates builds and releases across all eight environments, and OTA environments streamline field updates. The new ESP32-S3 variants provide enhanced USB-CDC support and flexible UART configurations, while dual PCA9685 I2C addressing expands hardware capabilities. The recent enhancement of upload speed from 115200 to 460800 baud for the ESP32-S3 UART-only environment significantly improves development workflow efficiency. Following the documented environments and troubleshooting steps ensures reliable builds and deployments across motor driver and joystick ECUs.
 
 ## Appendices
 
@@ -564,9 +566,10 @@ The ForwarderKE build system leverages PlatformIO environments to cleanly separa
   - `ARDUINO_USB_CDC_ON_BOOT`: enable USB serial support
   - `CONFIG_I2CDEV_NOLOCK`: disable I2C locking for performance
   - `PCA9685_I2C_ADDR1`, `PCA9685_I2C_ADDR2`: dual PCA9685 I2C addresses (0x40, 0x41)
+  - `upload_speed`: 460800 baud for UART-only variants
 - `ENABLE_OTA_WEBSERVER`: enable embedded OTA web server
 
-**Updated** Added new ESP32-S3 environment variables and dual PCA9685 addressing support
+**Updated** Added new ESP32-S3 environment variables and upload speed configuration
 
 **Section sources**
 - [platformio.ini:17-142](file://platformio.ini#L17-L142)
@@ -574,13 +577,15 @@ The ForwarderKE build system leverages PlatformIO environments to cleanly separa
 - [src/ecu_joystick.cpp:11-37](file://src/ecu_joystick.cpp#L11-L37)
 
 ### Board Configuration Matrix
-| Environment | Board Model | Flash Size | USB-CDC | UART-Only | Purpose |
-|-------------|-------------|------------|---------|-----------|---------|
-| motor_driver_s3 | esp32s3box | 8MB | ✓ | ✗ | ESP32-S3 with USB-CDC |
-| motor_driver_s3_uart | esp32-s3-devkitc-1 | 8MB | ✗ | ✓ | ESP32-S3 UART-only |
-| motor_driver | esp32dev | 4MB | ✗ | ✗ | Legacy ESP32 |
-| joystick1 | esp32dev | 4MB | ✗ | ✗ | Joystick ECU 1 |
-| joystick2 | esp32dev | 4MB | ✗ | ✗ | Joystick ECU 2 |
+| Environment | Board Model | Flash Size | USB-CDC | UART-Only | Upload Speed | Purpose |
+|-------------|-------------|------------|---------|-----------|--------------|---------|
+| motor_driver_s3 | esp32s3box | 8MB | ✓ | ✗ | 115200 baud | ESP32-S3 with USB-CDC |
+| motor_driver_s3_uart | esp32-s3-devkitc-1 | 8MB | ✗ | ✓ | **460800 baud** | ESP32-S3 UART-only (enhanced speed) |
+| motor_driver | esp32dev | 4MB | ✗ | ✗ | 115200 baud | Legacy ESP32 |
+| joystick1 | esp32dev | 4MB | ✗ | ✗ | 115200 baud | Joystick ECU 1 |
+| joystick2 | esp32dev | 4MB | ✗ | ✗ | 115200 baud | Joystick ECU 2 |
+
+**Updated** Enhanced upload speed column to reflect 460800 baud for UART-only variants
 
 **Section sources**
 - [platformio.ini:18-142](file://platformio.ini#L18-L142)

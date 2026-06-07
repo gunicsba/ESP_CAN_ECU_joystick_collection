@@ -24,7 +24,7 @@ struct ModuleInfo {
 static ModuleInfo g_modules[256];
 static uint32_t lastModuleScan = 0;
 
-static int parseJsonInt(const String& json, const char* key, int searchPos);
+static int parseJsonInt(const String& json, const char* key, int searchStart, int searchEnd = -1);
 
 // ---------------------------------------------------------------------------
 // HTML Page
@@ -142,7 +142,7 @@ input[type="range"] {
 }
 .axis-row {
     display: grid;
-    grid-template-columns: 36px 50px 65px 65px 45px 70px 70px 70px 70px 50px 50px 85px;
+    grid-template-columns: 36px 50px 65px 65px 45px 70px 70px 50px 50px 85px;
     gap: 6px;
     align-items: center;
     padding: 6px 0;
@@ -161,7 +161,7 @@ input[type="range"] {
 }
 .canout-row.header { color: #94a3b8; font-weight: 500; border-bottom: 2px solid #475569; }
 @media (max-width: 1000px) {
-    .axis-row { grid-template-columns: 30px 45px 55px 55px 40px 60px 60px 60px 60px 45px 45px 75px; }
+    .axis-row { grid-template-columns: 30px 45px 55px 55px 40px 60px 60px 45px 45px 75px; }
 }
 .slider-group { display: flex; align-items: center; gap: 8px; }
 .slider-group input[type="range"] { flex: 1; }
@@ -170,6 +170,19 @@ input[type="range"] {
 #status.info { background: #0ea5e9; display: block; }
 #status.success { background: #22c55e; display: block; }
 #status.error { background: #ef4444; display: block; }
+.db-bar { background:#334155; border-radius:6px; height:32px; position:relative; margin:8px 0; overflow:hidden; }
+.db-zone { position:absolute; height:100%; background:rgba(245,158,11,0.25); border-left:2px dashed #f59e0b; border-right:2px dashed #f59e0b; }
+.db-ptr { position:absolute; top:0; height:100%; width:3px; background:#22c55e; border-radius:2px; transform:translateX(-1px); z-index:2; transition:left 0.15s; }
+.db-ptr.stale { background:#ef4444; }
+.db-step-row { display:flex; align-items:center; gap:4px; }
+.db-step-row .db-lbl { font-size:0.7rem; color:#94a3b8; min-width:26px; }
+.db-step-row .db-val { font-size:0.8rem; color:#e2e8f0; font-weight:600; min-width:36px; text-align:center; }
+.db-btn { width:34px; height:30px; font-size:0.78rem; font-weight:700; padding:0; display:inline-flex; align-items:center; justify-content:center; border-radius:5px; }
+.db-btn.m { background:#ef4444; }
+.db-btn.m:hover { background:#dc2626; }
+.db-btn.p { background:#22c55e; }
+.db-btn.p:hover { background:#16a34a; }
+.db-stale { opacity:0.5; border-color:#ef4444 !important; }
 </style>
 </head>
 <body>
@@ -184,6 +197,7 @@ input[type="range"] {
     <button class="tab active" onclick="switchTab('dash')">Dashboard</button>
     <button class="tab" onclick="switchTab('modules')">Modules</button>
     <button class="tab" onclick="switchTab('mapping')">Motor Mapping</button>
+    <button class="tab" onclick="switchTab('dbtune')">Deadband</button>
     <button class="tab" onclick="switchTab('canout')">CAN Output</button>
     <button class="tab" onclick="switchTab('led')">LED Test</button>
     <button class="tab" onclick="switchTab('ota')">OTA Update</button>
@@ -201,11 +215,6 @@ input[type="range"] {
             <div id="joy2_pots"></div>
             <div class="info-row"><span>Buttons:</span><span id="joy2_btns">--</span></div>
         </div>
-    </div>
-    <div class="card">
-        <h3>Deadband Status</h3>
-        <p style="color:#94a3b8;font-size:0.72rem;margin:0 0 8px">Shows configured deadband vs actual joystick center. Offset = how far the configured center deviates from ADC midpoint (512).</p>
-        <div id="db_status"></div>
     </div>
     <div class="card">
         <h3>Solenoid Outputs</h3>
@@ -302,6 +311,18 @@ input[type="range"] {
     </div>
 </div>
 
+<div id="dbtune" class="panel">
+    <div class="card">
+        <h3>Deadband Tuning</h3>
+        <p style="color:#94a3b8;font-size:0.75rem;margin:0 0 12px">Adjust deadband per joystick potentiometer. The yellow zone shows the deadband range. Move the joystick past the deadband edges to activate output. Red = data missing.</p>
+        <div id="dbTuneList"></div>
+        <div style="margin-top:14px;display:flex;gap:8px;align-items:center">
+            <button onclick="saveDeadband()">Save All</button>
+            <span id="dbSaveStatus" style="color:#94a3b8;font-size:0.8rem"></span>
+        </div>
+    </div>
+</div>
+
 <div id="status"></div>
 
 <script>
@@ -357,50 +378,125 @@ function renderSol() {
     document.getElementById('sol_bars').innerHTML = h;
 }
 
-function renderDeadband() {
+let gDB = {};
+
+function renderDeadbandTuning() {
     const axes = gConfig.axes || [];
-    let h = '';
-    let found = false;
+    const pots = {};
     for (let i = 0; i < 16; i++) {
         const a = axes[i];
-        if (!a || !(a.flags & 1)) continue; // skip disabled
-        found = true;
-        const src = a.sourceAddress;
-        const pot = a.potIndex;
-        const dbMin = a.deadbandMin || 0;
-        const dbMax = a.deadbandMax || 0;
-        const center = Math.round((dbMin + dbMax) / 2);
-        const offset = center - 512;
-        const offsetPct = ((offset / 512) * 100).toFixed(1);
-        const offsetColor = Math.abs(offset) < 10 ? '#22c55e' : (Math.abs(offset) < 30 ? '#f59e0b' : '#ef4444');
-        // Get current pot value
-        let potVal = '--';
-        let potPct = '';
-        let dir = 'IDLE';
-        let dirColor = '#94a3b8';
-        if (src && gState.joy && gState.joy[src]) {
-            const pv = gState.joy[src].pots[pot];
-            if (pv !== undefined) {
-                potVal = pv;
-                if (pv < dbMin) { dir = 'REV'; dirColor = '#3b82f6'; potPct = (((dbMin - pv) / Math.max(dbMin, 1)) * 100).toFixed(0) + '%'; }
-                else if (pv > dbMax) { dir = 'FWD'; dirColor = '#22c55e'; potPct = (((pv - dbMax) / Math.max(1023 - dbMax, 1)) * 100).toFixed(0) + '%'; }
-                else { dir = 'DEAD'; dirColor = '#f59e0b'; potPct = '0%'; }
+        if (!a || !(a.flags & 1)) continue;
+        const key = a.sourceAddress + '_' + a.potIndex;
+        if (!pots[key]) pots[key] = { src: a.sourceAddress, pot: a.potIndex, dbMin: a.deadbandMin, dbMax: a.deadbandMax, axes: [] };
+        pots[key].axes.push(i);
+        if (gDB[key]) {
+            pots[key].dbMin = gDB[key].min;
+            pots[key].dbMax = gDB[key].max;
+        }
+    }
+    const keys = Object.keys(pots).sort();
+    let h = '';
+    for (const key of keys) {
+        const p = pots[key];
+        const srcLabel = '0x' + p.src.toString(16).toUpperCase();
+        const joy = gState.joy && gState.joy[p.src];
+        const online = joy && (joy.age < 3);
+        const pv = joy ? (joy.pots[p.pot] || 0) : 0;
+        const pct = (pv / 1023 * 100).toFixed(1);
+        const dbMinP = (p.dbMin / 1023 * 100).toFixed(1);
+        const dbMaxP = (p.dbMax / 1023 * 100).toFixed(1);
+        const ctr = Math.round((p.dbMin + p.dbMax) / 2);
+        const off = ctr - 512;
+        const offPct = ((off / 512) * 100).toFixed(1);
+        const offClr = Math.abs(off) < 10 ? '#22c55e' : (Math.abs(off) < 30 ? '#f59e0b' : '#ef4444');
+        const staleCls = online ? '' : ' db-stale';
+        const dir = !online ? 'N/A' : pv < p.dbMin ? 'REV' : pv > p.dbMax ? 'FWD' : 'DEAD';
+        const dirClr = !online ? '#ef4444' : pv < p.dbMin ? '#3b82f6' : pv > p.dbMax ? '#22c55e' : '#f59e0b';
+        const sa = p.src, pi = p.pot;
+        h += '<div class="card' + staleCls + '" style="margin-bottom:10px">';
+        h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
+        h += '<span style="font-weight:600;color:#38bdf8">' + srcLabel + ' Pot ' + (p.pot + 1) + '</span>';
+        h += '<span style="color:' + (online ? '#e2e8f0' : '#ef4444') + ';font-weight:600">' + (online ? pv : 'NO DATA') + '</span>';
+        h += '<span style="color:' + dirClr + ';font-weight:600;font-size:0.8rem">' + dir + '</span>';
+        h += '<span style="color:' + offClr + ';font-size:0.75rem">Off: ' + offPct + '%</span>';
+        h += '</div>';
+        h += '<div class="db-bar"><div class="db-zone" style="left:' + dbMinP + '%;width:' + Math.max(0.5, (p.dbMax - p.dbMin) / 1023 * 100) + '%"></div>';
+        h += '<div class="db-ptr' + (online ? '' : ' stale') + '" style="left:' + pct + '%"></div></div>';
+        h += '<div style="display:flex;gap:16px;flex-wrap:wrap">';
+        h += '<div class="db-step-row"><span class="db-lbl">Min</span>';
+        h += '<button class="db-btn m" onclick="adjDB(' + sa + ',' + pi + ',\'min\',-10)">-10</button>';
+        h += '<button class="db-btn m" onclick="adjDB(' + sa + ',' + pi + ',\'min\',-1)">-1</button>';
+        h += '<span class="db-val">' + p.dbMin + '</span>';
+        h += '<button class="db-btn p" onclick="adjDB(' + sa + ',' + pi + ',\'min\',1)">+1</button>';
+        h += '<button class="db-btn p" onclick="adjDB(' + sa + ',' + pi + ',\'min\',10)">+10</button></div>';
+        h += '<div class="db-step-row"><span class="db-lbl">Max</span>';
+        h += '<button class="db-btn m" onclick="adjDB(' + sa + ',' + pi + ',\'max\',-10)">-10</button>';
+        h += '<button class="db-btn m" onclick="adjDB(' + sa + ',' + pi + ',\'max\',-1)">-1</button>';
+        h += '<span class="db-val">' + p.dbMax + '</span>';
+        h += '<button class="db-btn p" onclick="adjDB(' + sa + ',' + pi + ',\'max\',1)">+1</button>';
+        h += '<button class="db-btn p" onclick="adjDB(' + sa + ',' + pi + ',\'max\',10)">+10</button></div>';
+        h += '</div></div>';
+    }
+    if (!keys.length) h = '<div style="color:#64748b;text-align:center;padding:16px">No axes configured. Add axes in Motor Mapping first.</div>';
+    document.getElementById('dbTuneList').innerHTML = h;
+}
+
+function adjDB(src, pot, which, delta) {
+    const key = src + '_' + pot;
+    const axes = gConfig.axes || [];
+    if (!gDB[key]) {
+        for (let i = 0; i < 16; i++) {
+            const a = axes[i];
+            if (a && a.sourceAddress === src && a.potIndex === pot && (a.flags & 1)) {
+                gDB[key] = { min: a.deadbandMin, max: a.deadbandMax };
+                break;
             }
         }
-        const srcLabel = src ? '0x' + src.toString(16).toUpperCase() : 'Off';
-        h += `<div class="info-row" style="font-size:0.78rem;padding:3px 0;border-bottom:1px solid #1e293b">
-            <span style="min-width:35px">A${i}</span>
-            <span style="min-width:40px">${srcLabel}</span>
-            <span style="min-width:35px">P${pot+1}</span>
-            <span style="min-width:80px">DB: ${dbMin}-${dbMax}</span>
-            <span style="min-width:70px">Ctr: ${center}</span>
-            <span style="min-width:75px;color:${offsetColor}">Off: ${offsetPct}%</span>
-            <span style="min-width:50px">Val: ${potVal}</span>
-            <span style="min-width:60px;color:${dirColor};font-weight:600">${dir} ${potPct}</span>
-        </div>`;
     }
-    if (!found) h = '<div style="color:#64748b;text-align:center;padding:12px">No axes configured</div>';
-    document.getElementById('db_status').innerHTML = h;
+    if (!gDB[key]) return;
+    if (which === 'min') gDB[key].min = Math.max(0, Math.min(1023, gDB[key].min + delta));
+    else gDB[key].max = Math.max(0, Math.min(1023, gDB[key].max + delta));
+    renderDeadbandTuning();
+    document.getElementById('dbSaveStatus').textContent = 'Unsaved changes';
+    document.getElementById('dbSaveStatus').style.color = '#f59e0b';
+}
+
+async function saveDeadband() {
+    // Re-fetch current config to avoid stale data
+    try {
+        const cr = await fetch('/api/config');
+        gConfig = await cr.json();
+    } catch(e) {}
+    const axes = gConfig.axes || [];
+    const updated = [];
+    let changed = 0;
+    for (let i = 0; i < 16; i++) {
+        const a = axes[i] || { sourceAddress:0, potIndex:0, outputChannel:i, deadbandMin:492, deadbandMax:532, pwmMin:64, pwmMax:128, flags:0, buttonGate:0 };
+        a.axisIdx = i;  // Required by server POST handler
+        const key = a.sourceAddress + '_' + a.potIndex;
+        if (gDB[key]) {
+            a.deadbandMin = gDB[key].min;
+            a.deadbandMax = gDB[key].max;
+            changed++;
+        }
+        updated.push(a);
+    }
+    console.log('Saving deadband:', changed, 'overrides', JSON.stringify(gDB));
+    try {
+        const r = await fetch('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({axes:updated}) });
+        if (r.ok) {
+            gDB = {};
+            document.getElementById('dbSaveStatus').textContent = 'Saved! (' + changed + ' pots)';
+            document.getElementById('dbSaveStatus').style.color = '#22c55e';
+            await fetchConfig();
+        } else {
+            document.getElementById('dbSaveStatus').textContent = 'Failed (HTTP ' + r.status + ')';
+            document.getElementById('dbSaveStatus').style.color = '#ef4444';
+        }
+    } catch(e) {
+        document.getElementById('dbSaveStatus').textContent = 'Network error';
+        document.getElementById('dbSaveStatus').style.color = '#ef4444';
+    }
 }
 
 function renderModules() {
@@ -433,8 +529,6 @@ function renderMapping() {
     h += '<div title="Joystick source address">Src</div>';
     h += '<div title="Potentiometer input (1-3)">Pot</div>';
     h += '<div title="PCA9685 output channel (0-15). Ch 0-7 = 1st board, Ch 8-15 = 2nd board">Ch</div>';
-    h += '<div title="Deadband lower bound (ADC 0-1023). Below this = reverse direction for bidirectional axes">DB Min</div>';
-    h += '<div title="Deadband upper bound (ADC 0-1023). Above this = forward direction">DB Max</div>';
     h += '<div title="Minimum PWM output duty (0-255). Scaled to 0-4095 on the PCA9685 output">PWM Min</div>';
     h += '<div title="Maximum PWM output duty (0-255). Scaled to 0-4095 on the PCA9685 output">PWM Max</div>';
     h += '<div title="Bidirectional: uses paired channels Ch (fwd) + Ch+1 (rev)">Bidir</div>';
@@ -442,7 +536,6 @@ function renderMapping() {
     h += '<div title="Button gate: axis only active when BTN1 is pressed (BTN1) or released (!BTN1). None = always active">Gate</div>';
     h += '</div>';
     h += '<div style="padding:6px 8px;color:#94a3b8;font-size:0.72rem;grid-column:1/-1;line-height:1.5">';
-    h += '<b>Deadband:</b> Joystick values between DB Min and DB Max are treated as center (no output). ';
     h += '<b>PWM Min/Max:</b> Output duty range (0=off, 255=full). ';
     h += '<b>Bidir:</b> Uses 2 channels: Ch=forward, Ch+1=reverse. ';
     h += '<b>Gate:</b> When BTN1 toggles, gated axes zero their outputs (valve returns to center).';
@@ -458,8 +551,6 @@ function renderMapping() {
             <div><select id="a${i}_src"><option value="0">Off</option><option value="33" ${a.sourceAddress==33?'selected':''}>0x21</option><option value="34" ${a.sourceAddress==34?'selected':''}>0x22</option></select></div>
             <div><select id="a${i}_pot"><option value="0" ${a.potIndex==0?'selected':''}>Pot1</option><option value="1" ${a.potIndex==1?'selected':''}>Pot2</option><option value="2" ${a.potIndex==2?'selected':''}>Pot3</option></select></div>
             <div><input type="number" id="a${i}_ch" value="${a.outputChannel}" min="0" max="15" style="width:45px"></div>
-            <div><input type="number" id="a${i}_dbmin" value="${a.deadbandMin}" min="0" max="1023" style="width:60px"></div>
-            <div><input type="number" id="a${i}_dbmax" value="${a.deadbandMax}" min="0" max="1023" style="width:60px"></div>
             <div><input type="number" id="a${i}_pwmin" value="${a.pwmMin}" min="0" max="255" style="width:60px"></div>
             <div><input type="number" id="a${i}_pwmax" value="${a.pwmMax}" min="0" max="255" style="width:60px"></div>
             <div><input type="checkbox" id="a${i}_bidir" ${bidir}></div>
@@ -481,7 +572,7 @@ async function fetchState() {
         document.getElementById('errCount').textContent = gState.errCount;
         document.getElementById('uptime').textContent = gState.uptime + 's';
         renderJoysticks();
-        renderDeadband();
+        renderDeadbandTuning();
         renderSol();
         renderModules();
     } catch(e) {}
@@ -492,6 +583,7 @@ async function fetchConfig() {
         const r = await fetch('/api/config');
         gConfig = await r.json();
         renderMapping();
+        renderDeadbandTuning();
     } catch(e) {}
 }
 
@@ -565,15 +657,17 @@ async function setAddr(current) {
 
 async function saveMapping() {
     const axes = [];
+    const cfgAxes = gConfig.axes || [];
     for (let i = 0; i < 16; i++) {
         const flags = (document.getElementById('a' + i + '_en').checked ? 1 : 0) | (document.getElementById('a' + i + '_bidir').checked ? 2 : 0) | (document.getElementById('a' + i + '_inv').checked ? 4 : 0);
+        const existing = cfgAxes[i] || {};
         axes.push({
             axisIdx: i,
             sourceAddress: parseInt(document.getElementById('a' + i + '_src').value),
             potIndex: parseInt(document.getElementById('a' + i + '_pot').value),
             outputChannel: parseInt(document.getElementById('a' + i + '_ch').value),
-            deadbandMin: parseInt(document.getElementById('a' + i + '_dbmin').value),
-            deadbandMax: parseInt(document.getElementById('a' + i + '_dbmax').value),
+            deadbandMin: existing.deadbandMin != null ? existing.deadbandMin : 492,
+            deadbandMax: existing.deadbandMax != null ? existing.deadbandMax : 532,
             pwmMin: parseInt(document.getElementById('a' + i + '_pwmin').value),
             pwmMax: parseInt(document.getElementById('a' + i + '_pwmax').value),
             flags: flags,
@@ -660,8 +754,7 @@ function startUpload() {
 }
 
 setInterval(fetchState, 1000);
-fetchState();
-fetchConfig();
+fetchConfig().then(() => fetchState());
 fetchCanOut();
 </script>
 </body>
@@ -739,6 +832,11 @@ static void handleConfigGet() {
     json += "\"axes\":[";
     for (int i = 0; i < MAX_AXIS_COUNT; i++) {
         const AxisConfig& a = g_motorCfg.axes[i];
+        if (i < 4 || a.flags) {
+            Serial.printf("[Config GET] axis%d src=0x%02X pot=%d ch=%d db=%d-%d pwm=%d-%d flags=%d\n",
+                i, a.sourceAddress, a.potIndex, a.outputChannel,
+                a.deadbandMin, a.deadbandMax, a.pwmMin, a.pwmMax, a.flags);
+        }
         json += "{";
         json += "\"sourceAddress\":" + String(a.sourceAddress) + ",";
         json += "\"potIndex\":" + String(a.potIndex) + ",";
@@ -759,24 +857,31 @@ static void handleConfigGet() {
 static void handleConfigPost() {
     if (server.hasArg("plain")) {
         String body = server.arg("plain");
-        // Simple JSON parsing for axis config
-        // This is a minimal parser - in production you'd use ArduinoJson
-        // For now, parse manually since we control the format
+        Serial.printf("[Config] POST body length=%d\n", body.length());
         for (int i = 0; i < MAX_AXIS_COUNT; i++) {
             String key = "\"axisIdx\":" + String(i);
             int idx = body.indexOf(key);
             if (idx >= 0) {
+                // Find the enclosing { } for this axis object
+                int objStart = body.lastIndexOf('{', idx);
+                int objEnd = body.indexOf('}', idx);
+                if (objStart < 0) objStart = 0;
+                if (objEnd < 0) objEnd = body.length();
+
                 AxisConfig a;
-                a.sourceAddress = parseJsonInt(body, "sourceAddress", idx);
-                a.potIndex = parseJsonInt(body, "potIndex", idx);
-                a.outputChannel = parseJsonInt(body, "outputChannel", idx);
-                a.deadbandMin = parseJsonInt(body, "deadbandMin", idx);
-                a.deadbandMax = parseJsonInt(body, "deadbandMax", idx);
-                a.pwmMin = parseJsonInt(body, "pwmMin", idx);
-                a.pwmMax = parseJsonInt(body, "pwmMax", idx);
-                a.flags = parseJsonInt(body, "flags", idx);
-                a.buttonGate = parseJsonInt(body, "buttonGate", idx);
+                a.sourceAddress = parseJsonInt(body, "sourceAddress", objStart, objEnd);
+                a.potIndex = parseJsonInt(body, "potIndex", objStart, objEnd);
+                a.outputChannel = parseJsonInt(body, "outputChannel", objStart, objEnd);
+                a.deadbandMin = parseJsonInt(body, "deadbandMin", objStart, objEnd);
+                a.deadbandMax = parseJsonInt(body, "deadbandMax", objStart, objEnd);
+                a.pwmMin = parseJsonInt(body, "pwmMin", objStart, objEnd);
+                a.pwmMax = parseJsonInt(body, "pwmMax", objStart, objEnd);
+                a.flags = parseJsonInt(body, "flags", objStart, objEnd);
+                a.buttonGate = parseJsonInt(body, "buttonGate", objStart, objEnd);
                 g_motorCfg.axes[i] = a;
+                Serial.printf("[Config] axis%d src=0x%02X pot=%d ch=%d db=%d-%d pwm=%d-%d flags=%d gate=%d\n",
+                    i, a.sourceAddress, a.potIndex, a.outputChannel,
+                    a.deadbandMin, a.deadbandMax, a.pwmMin, a.pwmMax, a.flags, a.buttonGate);
 
                 // Save locally if motor driver
 #if defined(ECU_TYPE_MOTOR_DRIVER)
@@ -796,14 +901,16 @@ static void handleConfigPost() {
     server.send(200, "application/json", "{\"ok\":true}");
 }
 
-static int parseJsonInt(const String& json, const char* key, int searchPos) {
+static int parseJsonInt(const String& json, const char* key, int searchStart, int searchEnd) {
+    if (searchEnd < 0) searchEnd = json.length();
     String search = String("\"") + key + "\":";
-    int pos = json.indexOf(search, searchPos);
-    if (pos < 0) return 0;
+    int pos = json.indexOf(search, searchStart);
+    if (pos < 0 || pos > searchEnd) return 0;
     pos += search.length();
-    while (pos < json.length() && (json[pos] == ' ' || json[pos] == '\t')) pos++;
+    while (pos < searchEnd && (json[pos] == ' ' || json[pos] == '\t')) pos++;
     int end = pos;
-    while (end < json.length() && (json[end] == '-' || isdigit(json[end]))) end++;
+    while (end < searchEnd && (json[end] == '-' || isdigit(json[end]))) end++;
+    if (end == pos) return 0;
     return json.substring(pos, end).toInt();
 }
 

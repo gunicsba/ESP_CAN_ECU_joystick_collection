@@ -87,9 +87,11 @@ bool ForwarderConfig::loadMotorConfig(MotorConfig& cfg) {
         char key[12];
         snprintf(key, sizeof(key), "axis_%d", i);
         if (_prefs.isKey(key)) {
-            String s = _prefs.getString(key, "");
-            if (s.length() >= 8) {
-                cfg.axes[i].unpack((const uint8_t*)s.c_str());
+            size_t len = _prefs.getBytesLength(key);
+            if (len >= 8) {
+                uint8_t buf[8];
+                _prefs.getBytes(key, buf, sizeof(buf));
+                cfg.axes[i].unpack(buf);
             }
         } else {
             cfg.axes[i].flags = 0;
@@ -145,9 +147,11 @@ bool ForwarderConfig::loadCanOutputRules(CanOutputRule rules[MAX_CAN_OUTPUT_RULE
         char key[12];
         snprintf(key, sizeof(key), "canout_%d", i);
         if (_prefs.isKey(key)) {
-            String s = _prefs.getString(key, "");
-            if (s.length() >= 7) {
-                rules[i].unpack((const uint8_t*)s.c_str());
+            size_t len = _prefs.getBytesLength(key);
+            if (len >= 7) {
+                uint8_t buf[8];
+                _prefs.getBytes(key, buf, sizeof(buf));
+                rules[i].unpack(buf);
             }
         } else {
             rules[i].enabled = false;

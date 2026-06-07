@@ -15,6 +15,13 @@
 - [can_output.h](file://src/can_output.h)
 </cite>
 
+## Update Summary
+**Changes Made**
+- Updated setPWM function implementation to support expanded channel addressing from 8 to 16 channels per board
+- Modified channel routing logic to handle dual PCA9685 controllers with 16 channels each
+- Updated practical examples to reflect new channel allocation scheme (0-15 across two boards)
+- Revised troubleshooting procedures for new channel addressing system
+
 ## Table of Contents
 1. [Introduction](#introduction)
 2. [Project Structure](#project-structure)
@@ -27,11 +34,11 @@
 9. [Conclusion](#conclusion)
 
 ## Introduction
-This document describes the PCA9685 PWM control subsystem used by the motor driver ECU to control up to 16 solenoids via two PCA9685 controllers. It explains the dual-controller architecture, I2C initialization sequence, oscillator and PWM frequency configuration, channel mapping logic, and safety mechanisms. Practical examples illustrate channel allocation, PWM value scaling, and troubleshooting steps for I2C and channel conflicts.
+This document describes the PCA9685 PWM control subsystem used by the motor driver ECU to control up to 16 solenoids via two PCA9685 controllers. The system has been expanded to support 16 channels per board, with automatic detection of secondary PCA9685 controller. It explains the dual-controller architecture, I2C initialization sequence, oscillator frequency configuration (25MHz), and PWM frequency settings (200Hz). Detailed channel mapping logic routes solenoid outputs to specific PCA9685 channels, including the updated setPWM function implementation with boundary checking for the expanded addressing scheme.
 
 ## Project Structure
 The motor driver ECU integrates:
-- I2C PCA9685 drivers for solenoid control
+- I2C PCA9685 drivers for solenoid control with expanded 16-channel capability
 - CAN bus for joystick-to-solenoid mapping and configuration
 - Non-volatile storage for runtime configuration
 - Optional OTA web server for firmware updates
@@ -40,10 +47,10 @@ The motor driver ECU integrates:
 graph TB
 MCU["ESP32-S3 MCU"]
 I2C["I2C Bus"]
-PCA1["PCA9685 Controller 1<br/>I2C 0x40"]
-PCA2["PCA9685 Controller 2<br/>I2C 0x41 (optional)"]
-SOL1["Solenoids 0-7"]
-SOL2["Solenoids 8-15"]
+PCA1["PCA9685 Controller 1<br/>I2C 0x40<br/>Channels 0-15"]
+PCA2["PCA9685 Controller 2<br/>I2C 0x41 (optional)<br/>Channels 0-15"]
+SOL1["Solenoids 0-15"]
+SOL2["Solenoids 16-31"]
 CAN["CAN Transceiver"]
 JOY["Joystick ECUs"]
 CFG["NVS Config Store"]
@@ -61,32 +68,32 @@ OTA --> MCU
 
 **Diagram sources**
 - [ecu_motor_driver.cpp:38-41](file://src/ecu_motor_driver.cpp#L38-L41)
-- [ecu_motor_driver.cpp:85-99](file://src/ecu_motor_driver.cpp#L85-L99)
-- [platformio.ini:25-29](file://platformio.ini#L25-L29)
+- [ecu_motor_driver.cpp:85-101](file://src/ecu_motor_driver.cpp#L85-L101)
+- [platformio.ini:25-36](file://platformio.ini#L25-L36)
 - [README.md:18-21](file://README.md#L18-L21)
 
 **Section sources**
 - [README.md:106-131](file://README.md#L106-L131)
-- [platformio.ini:17-30](file://platformio.ini#L17-L30)
+- [platformio.ini:17-36](file://platformio.ini#L17-L36)
 
 ## Core Components
 - Dual PCA9685 controllers:
-  - Primary controller at I2C address 0x40
-  - Secondary controller at I2C address 0x41, auto-detected
+  - Primary controller at I2C address 0x40 with 16 channels (0-15)
+  - Secondary controller at I2C address 0x41, auto-detected with 16 channels (0-15)
 - I2C pins configured via build flags or defaults
 - Oscillator frequency set to 25 MHz
 - PWM frequency set to 200 Hz
-- Channel mapping supports 16 channels (0–15) across two PCA9685 units
+- Channel mapping supports 32 channels (0-31) across two PCA9685 units
 - Safety timeout disables solenoids after 500 ms without CAN commands
 
 **Section sources**
 - [ecu_motor_driver.cpp:25-31](file://src/ecu_motor_driver.cpp#L25-L31)
 - [ecu_motor_driver.cpp:38-41](file://src/ecu_motor_driver.cpp#L38-L41)
-- [ecu_motor_driver.cpp:85-99](file://src/ecu_motor_driver.cpp#L85-L99)
+- [ecu_motor_driver.cpp:85-101](file://src/ecu_motor_driver.cpp#L85-L101)
 - [ecu_motor_driver.cpp:32-34](file://src/ecu_motor_driver.cpp#L32-L34)
 
 ## Architecture Overview
-The motor driver initializes I2C, probes for a second PCA9685, configures both controllers, and listens for CAN messages to update solenoid outputs. Configuration is stored in NVS and can be updated via CAN.
+The motor driver initializes I2C, probes for a second PCA9685, configures both controllers, and listens for CAN messages to update solenoid outputs. Configuration is stored in NVS and can be updated via CAN. The system now supports up to 32 solenoids across two PCA9685 boards.
 
 ```mermaid
 sequenceDiagram
@@ -116,7 +123,7 @@ end
 ```
 
 **Diagram sources**
-- [ecu_motor_driver.cpp:85-99](file://src/ecu_motor_driver.cpp#L85-L99)
+- [ecu_motor_driver.cpp:85-101](file://src/ecu_motor_driver.cpp#L85-L101)
 - [ecu_motor_driver.cpp:290-325](file://src/ecu_motor_driver.cpp#L290-L325)
 - [ForwarderCAN.cpp:13-52](file://lib/ForwarderCAN/ForwarderCAN.cpp#L13-L52)
 - [ForwarderConfig.cpp:76-104](file://lib/ForwarderConfig/ForwarderConfig.cpp#L76-L104)
@@ -148,24 +155,26 @@ SkipPCA2 --> Done
 ```
 
 **Diagram sources**
-- [ecu_motor_driver.cpp:85-99](file://src/ecu_motor_driver.cpp#L85-L99)
+- [ecu_motor_driver.cpp:87-101](file://src/ecu_motor_driver.cpp#L87-L101)
 
 **Section sources**
-- [ecu_motor_driver.cpp:85-99](file://src/ecu_motor_driver.cpp#L85-L99)
-- [platformio.ini:25-29](file://platformio.ini#L25-L29)
+- [ecu_motor_driver.cpp:87-101](file://src/ecu_motor_driver.cpp#L87-L101)
+- [platformio.ini:25-36](file://platformio.ini#L25-L36)
 
 ### Channel Mapping and setPWM Implementation
-- Each solenoid is mapped to an output channel 0–15.
-- Channels 0–7 are routed to PCA1; channels 8–15 are routed to PCA2 if present.
-- The setPWM function enforces a 16-bit duty value clamped to 0–4095 and calls the appropriate PCA controller.
+- Each solenoid is mapped to an output channel 0-31.
+- Channels 0-15 are routed to PCA1; channels 16-31 are routed to PCA2 if present.
+- The setPWM function enforces a 16-bit duty value clamped to 0-4095 and calls the appropriate PCA controller with adjusted channel addressing.
+
+**Updated** The setPWM function now supports expanded addressing with dual PCA9685 controllers, routing channels 0-15 to PCA1 and channels 16-31 to PCA2 with proper offset calculation.
 
 ```mermaid
 flowchart TD
 In(["setPWM(channel, value)"]) --> Clamp["Clamp value to 0..4095"]
-Clamp --> Route{"channel < 8?"}
+Clamp --> Route{"channel < 16?"}
 Route --> |Yes| PCA1["pca1.setPWM(channel, on, value)"]
-Route --> |No| CheckPCA2{"channel < 16 and PCA2 present?"}
-CheckPCA2 --> |Yes| PCA2["pca2.setPWM(channel-8, on, value)"]
+Route --> |No| CheckPCA2{"channel < 32 and PCA2 present?"}
+CheckPCA2 --> |Yes| PCA2["pca2.setPWM(channel-16, on, value)"]
 CheckPCA2 --> |No| Ignore["No-op or error"]
 PCA1 --> Out(["Done"])
 PCA2 --> Out
@@ -173,15 +182,15 @@ Ignore --> Out
 ```
 
 **Diagram sources**
-- [ecu_motor_driver.cpp:69-76](file://src/ecu_motor_driver.cpp#L69-L76)
+- [ecu_motor_driver.cpp:71-78](file://src/ecu_motor_driver.cpp#L71-L78)
 
 **Section sources**
-- [ecu_motor_driver.cpp:69-76](file://src/ecu_motor_driver.cpp#L69-L76)
+- [ecu_motor_driver.cpp:71-78](file://src/ecu_motor_driver.cpp#L71-L78)
 - [ForwarderConfig.h:43](file://lib/ForwarderConfig/ForwarderConfig.h#L43)
 
 ### PWM Value Scaling: 8-bit to 16-bit Resolution
-- CAN solenoid commands carry 8-bit values (0–255).
-- These are scaled to 16-bit (0–4095) before writing to PCA9685:
+- CAN solenoid commands carry 8-bit values (0-255).
+- These are scaled to 16-bit (0-4095) before writing to PCA9685:
   - value_16bit = (value_8bit × 4095) / 255
 - Axis mapping also scales 8-bit PWM limits to 16-bit internally.
 
@@ -230,10 +239,12 @@ end
 
 ### Configuration and Axis Mapping
 - Axis configuration defines:
-  - Source joystick address and pot index (0–2 for three pots)
-  - Output channel (0–15)
+  - Source joystick address and pot index (0-2 for three pots)
+  - Output channel (0-31)
   - Deadband thresholds and PWM min/max (scaled to 16-bit internally)
 - Stored in NVS and can be updated via CAN.
+
+**Updated** Axis configuration now supports up to 32 output channels (0-31) across two PCA9685 boards, with each axis capable of controlling either a single channel or a pair of channels for bidirectional operation.
 
 ```mermaid
 classDiagram
@@ -277,8 +288,8 @@ MotorConfig --> AxisConfig : "contains"
 
 - Channel allocation example:
   - Axis 0: source joystick 0x21, pot 0 → output channel 0 (PCA1 ch0)
-  - Axis 1: source joystick 0x21, pot 1 → output channel 8 (PCA2 ch0)
-  - Axis 2: source joystick 0x22, pot 2 → output channel 15 (PCA2 ch7)
+  - Axis 1: source joystick 0x21, pot 1 → output channel 16 (PCA2 ch0)
+  - Axis 2: source joystick 0x22, pot 2 → output channel 31 (PCA2 ch15)
 
 - PWM scaling example:
   - Input: 127 (8-bit)
@@ -287,12 +298,14 @@ MotorConfig --> AxisConfig : "contains"
 
 - Address detection:
   - PCA1 at 0x40 is always assumed.
-  - PCA2 at 0x41 is detected via I2C probe; if absent, only 8 channels are used.
+  - PCA2 at 0x41 is detected via I2C probe; if absent, only 16 channels are used.
+
+**Updated** Channel allocation now supports up to 32 channels (0-31) with the second PCA9685 board controlling channels 16-31 instead of 0-7.
 
 **Section sources**
-- [ecu_motor_driver.cpp:69-76](file://src/ecu_motor_driver.cpp#L69-L76)
+- [ecu_motor_driver.cpp:71-78](file://src/ecu_motor_driver.cpp#L71-L78)
 - [ecu_motor_driver.cpp:209-211](file://src/ecu_motor_driver.cpp#L209-L211)
-- [ecu_motor_driver.cpp:85-99](file://src/ecu_motor_driver.cpp#L85-L99)
+- [ecu_motor_driver.cpp:87-101](file://src/ecu_motor_driver.cpp#L87-L101)
 
 ## Dependency Analysis
 - The motor driver depends on:
@@ -328,8 +341,6 @@ MD --> OTA
 - CAN message processing updates solenoids promptly; avoid excessive CAN traffic to prevent latency.
 - Safety timeout prevents unintended actuation; tune SAFETY_TIMEOUT_MS per application needs.
 
-[No sources needed since this section provides general guidance]
-
 ## Troubleshooting Guide
 
 - I2C communication failure:
@@ -345,15 +356,19 @@ MD --> OTA
 - Channel conflicts:
   - Validate axis mapping to prevent multiple axes targeting the same output channel.
   - Use CAN configuration messages to update mappings safely.
+  - Note that channels 0-15 go to PCA1 and channels 16-31 go to PCA2.
 
 - Unexpected solenoid behavior:
   - Check deadband thresholds and PWM min/max settings.
   - Inspect safety timeout logic; ensure CAN commands are being received.
+  - Verify that channel numbers are within the correct range (0-15 for PCA1, 16-31 for PCA2).
+
+**Updated** Troubleshooting now includes guidance for the expanded channel addressing system, particularly noting the difference between PCA1 (channels 0-15) and PCA2 (channels 16-31) addressing.
 
 **Section sources**
-- [ecu_motor_driver.cpp:85-99](file://src/ecu_motor_driver.cpp#L85-L99)
+- [ecu_motor_driver.cpp:87-101](file://src/ecu_motor_driver.cpp#L87-L101)
 - [ecu_motor_driver.cpp:290-325](file://src/ecu_motor_driver.cpp#L290-L325)
 - [ForwarderConfig.cpp:76-104](file://lib/ForwarderConfig/ForwarderConfig.cpp#L76-L104)
 
 ## Conclusion
-The PCA9685 PWM control subsystem provides robust, scalable solenoid control with automatic dual-controller detection, precise I2C initialization, and safe operation via CAN-driven configuration and timeouts. By following the documented initialization sequence, mapping guidelines, and troubleshooting steps, integrators can reliably deploy up to 16 channels across two PCA9685 units.
+The PCA9685 PWM control subsystem provides robust, scalable solenoid control with automatic dual-controller detection, precise I2C initialization, and safe operation via CAN-driven configuration and timeouts. The expanded addressing system now supports up to 32 channels across two PCA9685 units, with automatic detection of secondary controllers and proper channel routing. By following the documented initialization sequence, mapping guidelines, and troubleshooting steps, integrators can reliably deploy up to 32 channels across two PCA9685 boards with the updated channel addressing scheme.
