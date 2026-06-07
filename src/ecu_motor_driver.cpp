@@ -52,6 +52,11 @@ static bool g_outputDirty = false;
 static uint32_t lastOutputBroadcast = 0;
 static uint32_t lastLedUpdate = 0;
 
+// Motor test mode - allows manual control of outputs via web UI
+bool g_testMode = false;
+uint16_t g_testValues[16] = {0};  // Manual test values for outputs 1-16
+uint32_t g_lastTestCmd = 0;       // Auto-disable after 10s timeout
+
 static uint8_t ledR = 0, ledG = 0, ledB = 20;
 static bool blinkFast = false;
 static uint32_t blinkTimer = 0;
@@ -122,6 +127,16 @@ static void initPCA() {
     }
 }
 
+// Apply exponential curvature to a value 0-255
+// curveExp: 2=linear(1.0), 3=1.5, 4=2.0, 5=2.5, 6=3.0
+static uint32_t applyCurve(uint32_t t, uint8_t curveExp) {
+    if (curveExp <= 2) return t;  // Linear
+    float normalized = t / 255.0f;
+    float exponent = curveExp / 2.0f;
+    float curved = powf(normalized, exponent);
+    return (uint32_t)(curved * 255.0f);
+}
+
 // Paired channel output: fwdCh and revCh get PWM values
 // For bidirectional axes: outputChannel = forward, outputChannel+1 = reverse
 // For unidirectional axes: only outputChannel is used
@@ -137,6 +152,7 @@ static void mapAxis(const AxisConfig& axis, uint16_t potValue, uint16_t& fwdCh, 
             if (range == 0) range = 1;
             uint32_t t = ((uint32_t)(axis.deadbandMin - potValue) * 255u) / range;
             if (t > 255) t = 255;
+            t = applyCurve(t, axis.curveExp);  // Apply curvature
             uint8_t pwm = axis.pwmMin + (uint8_t)(((uint32_t)(axis.pwmMax - axis.pwmMin) * t) / 255u);
             revCh = ((uint16_t)pwm * 4095u) / 255u;
             fwdCh = 0;
@@ -146,6 +162,7 @@ static void mapAxis(const AxisConfig& axis, uint16_t potValue, uint16_t& fwdCh, 
             if (range == 0) range = 1;
             uint32_t t = ((uint32_t)(potValue - axis.deadbandMax) * 255u) / range;
             if (t > 255) t = 255;
+            t = applyCurve(t, axis.curveExp);  // Apply curvature
             uint8_t pwm = axis.pwmMin + (uint8_t)(((uint32_t)(axis.pwmMax - axis.pwmMin) * t) / 255u);
             fwdCh = ((uint16_t)pwm * 4095u) / 255u;
             revCh = 0;
@@ -157,6 +174,7 @@ static void mapAxis(const AxisConfig& axis, uint16_t potValue, uint16_t& fwdCh, 
             if (range == 0) range = 1;
             uint32_t t = ((uint32_t)(potValue - axis.deadbandMax) * 255u) / range;
             if (t > 255) t = 255;
+            t = applyCurve(t, axis.curveExp);  // Apply curvature
             uint8_t pwm = axis.pwmMin + (uint8_t)(((uint32_t)(axis.pwmMax - axis.pwmMin) * t) / 255u);
             fwdCh = ((uint16_t)pwm * 4095u) / 255u;
         }
@@ -198,6 +216,23 @@ static void zeroAxisChannels(const AxisConfig& axis) {
 }
 
 static void updateAxes() {
+    // Test mode: use manual test values instead of CAN-controlled values
+    if (g_testMode && g_lastTestCmd > 0 && millis() - g_lastTestCmd < 10000) {
+        for (int i = 0; i < 16; i++) {
+            if (g_testValues[i] != g_solenoidValues[i]) {
+                g_solenoidValues[i] = g_testValues[i];
+                setPWMTracked(i, g_testValues[i]);
+            }
+        }
+        return;  // Skip CAN-based axis processing
+    }
+    // Auto-disable test mode after timeout
+    if (g_testMode && g_lastTestCmd > 0 && millis() - g_lastTestCmd >= 10000) {
+        g_testMode = false;
+        // Zero all test values for safety
+        for (int i = 0; i < 16; i++) g_testValues[i] = 0;
+    }
+    
     bool debugPrint = (millis() - lastAxisDebug >= 1000);
     if (debugPrint) lastAxisDebug = millis();
     for (int i = 0; i < MAX_AXIS_COUNT; i++) {

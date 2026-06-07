@@ -9,6 +9,9 @@
 #include "ForwarderCAN.h"
 #include "ForwarderConfig.h"
 #include "web_state.h"
+#if defined(ECU_TYPE_MOTOR_DRIVER)
+#include "ecu_motor_driver.h"
+#endif
 
 static WebServer server(80);
 static bool otaActive = false;
@@ -142,8 +145,8 @@ input[type="range"] {
 }
 .axis-row {
     display: grid;
-    grid-template-columns: 36px 50px 80px 80px 55px 70px 70px 50px 50px 100px;
-    gap: 6px;
+    grid-template-columns: 30px 40px 70px 70px 50px 60px 60px 45px 40px 70px 70px;
+    gap: 4px;
     align-items: center;
     padding: 6px 0;
     border-bottom: 1px solid #334155;
@@ -161,7 +164,7 @@ input[type="range"] {
 }
 .canout-row.header { color: #94a3b8; font-weight: 500; border-bottom: 2px solid #475569; }
 @media (max-width: 1000px) {
-    .axis-row { grid-template-columns: 30px 45px 70px 70px 50px 60px 60px 45px 45px 90px; }
+    .axis-row { grid-template-columns: 25px 35px 60px 60px 45px 55px 55px 40px 35px 60px 65px; }
 }
 .slider-group { display: flex; align-items: center; gap: 8px; }
 .slider-group input[type="range"] { flex: 1; }
@@ -199,6 +202,7 @@ input[type="range"] {
     <button class="tab" onclick="switchTab('mapping')">Motor Mapping</button>
     <button class="tab" onclick="switchTab('dbtune')">Deadband</button>
     <button class="tab" onclick="switchTab('canout')">CAN Output</button>
+    <button class="tab" onclick="switchTab('mottest')">Motor Test</button>
     <button class="tab" onclick="switchTab('led')">LED Test</button>
     <button class="tab" onclick="switchTab('ota')">OTA Update</button>
 </div>
@@ -259,6 +263,21 @@ input[type="range"] {
             <button onclick="saveCanOut()">Save</button>
             <button class="secondary" onclick="fetchCanOut()">Refresh</button>
         </div>
+    </div>
+</div>
+
+<div id="mottest" class="panel">
+    <div class="card">
+        <h3>Motor Output Testing</h3>
+        <p style="color:#94a3b8;font-size:0.85rem;margin:0 0 12px">Manually control PWM outputs to test solenoids. Test mode auto-disables after 10 seconds of inactivity.</p>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+                <input type="checkbox" id="testModeEn" onchange="toggleTestMode()" style="width:18px;height:18px">
+                <span>Enable Test Mode</span>
+            </label>
+            <span id="testTimeout" style="color:#f59e0b;font-size:0.85rem"></span>
+        </div>
+        <div id="testOutList"></div>
     </div>
 </div>
 
@@ -568,6 +587,7 @@ function renderMapping() {
     h += '<div title="Bidirectional: uses paired channels for fwd/rev">Bidir</div>';
     h += '<div title="Invert: swaps forward/reverse channels so joystick direction is reversed">Inv</div>';
     h += '<div title="Button gate: axis only active when BTN1 is pressed (BTN1) or released (!BTN1). None = always active">Gate</div>';
+    h += '<div title="Exponential curvature: Linear (1.0x) or curved (1.5x-3.0x) for smoother center control">Curve</div>';
     h += '</div>';
     h += '<div style="padding:6px 8px;color:#94a3b8;font-size:0.72rem;grid-column:1/-1;line-height:1.5">';
     h += '<b>Out:</b> Output 1-8 (labeled on board). Each uses 2 channels (fwd+rev). ';
@@ -576,10 +596,11 @@ function renderMapping() {
     h += '<b>Gate:</b> When BTN1 toggles, gated axes zero their outputs (valve returns to center).';
     h += '</div>';
     for (let i = 0; i < 16; i++) {
-        const a = axes[i] || { sourceAddress: 0, potIndex: 0, outputChannel: 0, deadbandMin: 307, deadbandMax: 717, pwmMin: 20, pwmMax: 100, flags: 0, buttonGate: 0 };
+        const a = axes[i] || { sourceAddress: 0, potIndex: 0, outputChannel: 0, deadbandMin: 307, deadbandMax: 717, pwmMin: 20, pwmMax: 100, flags: 0, buttonGate: 0, curveExp: 2 };
         const en = (a.flags & 1) ? 'checked' : '';
         const bidir = (a.flags & 2) ? 'checked' : '';
         const invert = (a.flags & 4) ? 'checked' : '';
+        const curve = a.curveExp || 2;  // Default to linear (2 = 1.0x)
         // Convert channel to output number (0->1, 2->2, 4->3, ..., 14->8)
         const outNum = Math.floor(a.outputChannel / 2) + 1;
         // Build output dropdown options (1-8)
@@ -597,7 +618,8 @@ function renderMapping() {
             <div><input type="number" id="a${i}_pwmax" value="${a.pwmMax}" min="0" max="255" style="width:60px"></div>
             <div><input type="checkbox" id="a${i}_bidir" ${bidir} onchange="checkChannelConflicts()"></div>
             <div><input type="checkbox" id="a${i}_inv" ${invert}></div>
-            <div><select id="a${i}_bgate" style="min-width:65px"><option value="0" ${a.buttonGate==0?'selected':''}>None</option><option value="1" ${a.buttonGate==1?'selected':''}>BTN1</option><option value="2" ${a.buttonGate==2?'selected':''}>!BTN1</option></select></div>
+            <div><select id="a${i}_bgate" style="min-width:60px"><option value="0" ${a.buttonGate==0?'selected':''}>None</option><option value="1" ${a.buttonGate==1?'selected':''}>BTN1</option><option value="2" ${a.buttonGate==2?'selected':''}>!BTN1</option></select></div>
+            <div><select id="a${i}_curve" style="min-width:60px"><option value="2" ${curve==2?'selected':''}>1.0x</option><option value="3" ${curve==3?'selected':''}>1.5x</option><option value="4" ${curve==4?'selected':''}>2.0x</option><option value="5" ${curve==5?'selected':''}>2.5x</option><option value="6" ${curve==6?'selected':''}>3.0x</option></select></div>
         </div>`;
     }
     h += '<div id="channelWarnings" style="grid-column:1/-1;padding:8px;margin-top:8px;"></div>';
@@ -773,7 +795,8 @@ async function saveMapping() {
             pwmMin: parseInt(document.getElementById('a' + i + '_pwmin').value),
             pwmMax: parseInt(document.getElementById('a' + i + '_pwmax').value),
             flags: flags,
-            buttonGate: parseInt(document.getElementById('a' + i + '_bgate').value) || 0
+            buttonGate: parseInt(document.getElementById('a' + i + '_bgate').value) || 0,
+            curveExp: parseInt(document.getElementById('a' + i + '_curve').value) || 2
         });
     }
     try {
@@ -855,9 +878,96 @@ function startUpload() {
     xhr.send(file);
 }
 
+// ---------------------------------------------------------------------------
+// Motor Test functions
+// ---------------------------------------------------------------------------
+let gTestMode = false;
+let gTestValues = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
+
+function renderTestOutputs() {
+    let h = '<div style="display:grid;grid-template-columns:60px 80px repeat(5,60px);gap:8px;align-items:center;font-size:0.85rem">';
+    h += '<div style="color:#94a3b8;font-weight:500">Output</div>';
+    h += '<div style="color:#94a3b8;font-weight:500">Value</div>';
+    h += '<div></div><div></div><div></div><div></div><div></div>';
+    for (let i = 0; i < 16; i++) {
+        const val = gTestValues[i];
+        const pct = (val / 4095 * 100).toFixed(1);
+        h += `<div style="font-weight:600">Out ${i+1}</div>`;
+        h += `<div><span id="tv${i}">${val}</span> <span style="color:#64748b;font-size:0.75rem">(${pct}%)</span></div>`;
+        h += `<button class="secondary" onclick="adjTest(${i},-100)" style="padding:4px 8px">-100</button>`;
+        h += `<button class="secondary" onclick="adjTest(${i},-10)" style="padding:4px 8px">-10</button>`;
+        h += `<button class="danger" onclick="zeroTest(${i})" style="padding:4px 8px">Zero</button>`;
+        h += `<button class="secondary" onclick="adjTest(${i},10)" style="padding:4px 8px">+10</button>`;
+        h += `<button class="secondary" onclick="adjTest(${i},100)" style="padding:4px 8px">+100</button>`;
+    }
+    h += '</div>';
+    document.getElementById('testOutList').innerHTML = h;
+}
+
+async function toggleTestMode() {
+    gTestMode = document.getElementById('testModeEn').checked;
+    if (gTestMode) {
+        // Zero all values when enabling
+        gTestValues = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
+        renderTestOutputs();
+    }
+    await sendTestCmd();
+}
+
+async function adjTest(idx, delta) {
+    if (!gTestMode) {
+        document.getElementById('testModeEn').checked = true;
+        gTestMode = true;
+    }
+    let newVal = gTestValues[idx] + delta;
+    if (newVal < 0) newVal = 0;
+    if (newVal > 4095) newVal = 4095;
+    gTestValues[idx] = newVal;
+    document.getElementById('tv' + idx).parentElement.innerHTML = 
+        `<span id="tv${idx}">${newVal}</span> <span style="color:#64748b;font-size:0.75rem">(${(newVal/4095*100).toFixed(1)}%)</span>`;
+    await sendTestCmd();
+}
+
+async function zeroTest(idx) {
+    gTestValues[idx] = 0;
+    document.getElementById('tv' + idx).parentElement.innerHTML = 
+        `<span id="tv${idx}">0</span> <span style="color:#64748b;font-size:0.75rem">(0.0%)</span>`;
+    await sendTestCmd();
+}
+
+async function sendTestCmd() {
+    try {
+        await fetch('/api/motortest', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enabled: gTestMode, values: gTestValues})
+        });
+    } catch(e) { setStatus('Test command failed', 'error'); }
+}
+
+async function fetchTestState() {
+    try {
+        const r = await fetch('/api/motortest');
+        const d = await r.json();
+        if (gTestMode !== d.enabled) {
+            gTestMode = d.enabled;
+            document.getElementById('testModeEn').checked = gTestMode;
+        }
+        gTestValues = d.values;
+        if (d.timeout > 0) {
+            document.getElementById('testTimeout').textContent = `Auto-disable in ${(d.timeout/1000).toFixed(1)}s`;
+        } else {
+            document.getElementById('testTimeout').textContent = gTestMode ? 'Waiting for command...' : '';
+        }
+        renderTestOutputs();
+    } catch(e) {}
+}
+
 setInterval(fetchState, 1000);
 fetchConfig().then(() => fetchState());
 fetchCanOut();
+fetchTestState();
+setInterval(fetchTestState, 2000);
 </script>
 </body>
 </html>
@@ -948,7 +1058,8 @@ static void handleConfigGet() {
         json += "\"pwmMin\":" + String(a.pwmMin) + ",";
         json += "\"pwmMax\":" + String(a.pwmMax) + ",";
         json += "\"flags\":" + String(a.flags) + ",";
-        json += "\"buttonGate\":" + String(a.buttonGate);
+        json += "\"buttonGate\":" + String(a.buttonGate) + ",";
+        json += "\"curveExp\":" + String(a.curveExp);
         json += "},";
     }
     if (json.endsWith(",")) json.remove(json.length() - 1);
@@ -980,10 +1091,12 @@ static void handleConfigPost() {
                 a.pwmMax = parseJsonInt(body, "pwmMax", objStart, objEnd);
                 a.flags = parseJsonInt(body, "flags", objStart, objEnd);
                 a.buttonGate = parseJsonInt(body, "buttonGate", objStart, objEnd);
+                a.curveExp = parseJsonInt(body, "curveExp", objStart, objEnd);
+                if (a.curveExp == 0) a.curveExp = 2;  // Default to linear
                 g_motorCfg.axes[i] = a;
-                Serial.printf("[Config] axis%d src=0x%02X pot=%d ch=%d db=%d-%d pwm=%d-%d flags=%d gate=%d\n",
+                Serial.printf("[Config] axis%d src=0x%02X pot=%d ch=%d db=%d-%d pwm=%d-%d flags=%d gate=%d curve=%d\n",
                     i, a.sourceAddress, a.potIndex, a.outputChannel,
-                    a.deadbandMin, a.deadbandMax, a.pwmMin, a.pwmMax, a.flags, a.buttonGate);
+                    a.deadbandMin, a.deadbandMax, a.pwmMin, a.pwmMax, a.flags, a.buttonGate, a.curveExp);
 
                 // Save locally if motor driver
 #if defined(ECU_TYPE_MOTOR_DRIVER)
@@ -1096,6 +1209,79 @@ static void handleCanOutputPost() {
     server.send(200, "application/json", "{\"ok\":true}");
 }
 
+// ---------------------------------------------------------------------------
+// Motor Test API - allows manual control of PWM outputs for testing
+// ---------------------------------------------------------------------------
+static void handleMotorTestGet() {
+#if defined(ECU_TYPE_MOTOR_DRIVER)
+    String json = "{";
+    json += "\"enabled\":" + String(g_testMode ? "true" : "false") + ",";
+    json += "\"values\":[";
+    for (int i = 0; i < 16; i++) {
+        json += String(g_testValues[i]);
+        if (i < 15) json += ",";
+    }
+    json += "],";
+    json += "\"timeout\":" + String((g_lastTestCmd > 0 && millis() - g_lastTestCmd < 10000) ? (10000 - (millis() - g_lastTestCmd)) : 0);
+    json += "}";
+    server.send(200, "application/json", json);
+#else
+    server.send(200, "application/json", "{\"enabled\":false,\"values\":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]}");
+#endif
+}
+
+static void handleMotorTestPost() {
+#if defined(ECU_TYPE_MOTOR_DRIVER)
+    if (server.hasArg("plain")) {
+        String body = server.arg("plain");
+        // Parse enabled flag
+        if (body.indexOf("\"enabled\":true") >= 0) {
+            g_testMode = true;
+            g_lastTestCmd = millis();
+        } else if (body.indexOf("\"enabled\":false") >= 0) {
+            g_testMode = false;
+            // Zero all test values when disabling
+            for (int i = 0; i < 16; i++) g_testValues[i] = 0;
+        }
+        // Parse values array
+        int idx = body.indexOf("\"values\":");
+        if (idx >= 0) {
+            int arrStart = body.indexOf('[', idx);
+            int arrEnd = body.indexOf(']', arrStart);
+            if (arrStart >= 0 && arrEnd > arrStart) {
+                String arr = body.substring(arrStart + 1, arrEnd);
+                int pos = 0;
+                for (int i = 0; i < 16 && pos < arr.length(); i++) {
+                    int comma = arr.indexOf(',', pos);
+                    if (comma < 0) comma = arr.length();
+                    String val = arr.substring(pos, comma);
+                    val.trim();
+                    int v = val.toInt();
+                    if (v < 0) v = 0;
+                    if (v > 4095) v = 4095;
+                    g_testValues[i] = v;
+                    pos = comma + 1;
+                }
+            }
+        }
+        // Parse single output update (for +/- buttons)
+        if (body.indexOf("\"output\":") >= 0) {
+            int outIdx = parseJsonInt(body, "output", 0, body.length());
+            if (outIdx >= 0 && outIdx < 16) {
+                int newVal = parseJsonInt(body, "value", 0, body.length());
+                if (newVal < 0) newVal = 0;
+                if (newVal > 4095) newVal = 4095;
+                g_testValues[outIdx] = newVal;
+                g_lastTestCmd = millis();
+            }
+        }
+    }
+    server.send(200, "application/json", "{\"ok\":true}");
+#else
+    server.send(200, "application/json", "{\"ok\":false,\"error\":\"not motor driver\"}");
+#endif
+}
+
 static void handleUpdate() {
     HTTPUpload& upload = server.upload();
     if (upload.status == UPLOAD_FILE_START) {
@@ -1193,6 +1379,8 @@ void ota_setup(const char* hostname) {
     server.on("/api/address", HTTP_POST, handleAddress);
     server.on("/api/canoutput", HTTP_GET, handleCanOutputGet);
     server.on("/api/canoutput", HTTP_POST, handleCanOutputPost);
+    server.on("/api/motortest", HTTP_GET, handleMotorTestGet);
+    server.on("/api/motortest", HTTP_POST, handleMotorTestPost);
     server.on("/update", HTTP_POST, handleUpdatePost, handleUpdate);
     server.begin();
     Serial.println("[OTA] Web server started on port 80");

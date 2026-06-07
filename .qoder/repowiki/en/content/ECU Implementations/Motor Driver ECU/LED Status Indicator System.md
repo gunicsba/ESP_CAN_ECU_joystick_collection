@@ -13,6 +13,14 @@
 - [lib/ForwarderConfig/ForwarderConfig.h](file://lib/ForwarderConfig/ForwarderConfig.h)
 </cite>
 
+## Update Summary
+**Changes Made**
+- Enhanced LED status indicator system with sophisticated detection logic for joystick ECU
+- Added priority-based status patterns (identify mode, CAN bus broken, motor ECU offline)
+- Implemented comprehensive TWAI hardware state monitoring with bus-off detection
+- Added detailed troubleshooting guidance with priority-based status interpretation
+- Updated detection algorithms for improved reliability and diagnostic capabilities
+
 ## Table of Contents
 1. [Introduction](#introduction)
 2. [Project Structure](#project-structure)
@@ -25,20 +33,20 @@
 9. [Conclusion](#conclusion)
 
 ## Introduction
-This document describes the NeoPixel LED status indicator system used by the Forwarder CAN Controller ECUs. It covers RGB color management, blinking patterns for operational states, identification mode, LED state machine behavior, update timing logic, integration with the main control loop, hardware pin configuration, and troubleshooting procedures.
+This document describes the enhanced NeoPixel LED status indicator system used by the Forwarder CAN Controller ECUs. The system now features sophisticated detection logic with priority-based status patterns, comprehensive TWAI hardware state monitoring, and detailed troubleshooting guidance. It covers RGB color management, advanced blinking patterns for operational states, identification mode functionality, and comprehensive status interpretation guidelines.
 
 ## Project Structure
-The LED system is implemented in two ECU variants:
-- Motor Driver ECU: Uses onboard WS2812 LED for status indication
-- Joystick ECU: Uses onboard WS2812 LED for status indication
+The LED system is implemented in two ECU variants with enhanced detection logic:
+- **Motor Driver ECU**: Uses onboard WS2812 LED for status indication with traditional state machine
+- **Joystick ECU**: Enhanced with sophisticated detection logic including priority-based status patterns
 
-Both share the same NeoPixelBus library and follow similar LED state machine patterns, with minor differences in color defaults and blink timings.
+Both share the same NeoPixelBus library but implement different LED state machine patterns with the joystick ECU featuring advanced bus monitoring capabilities.
 
 ```mermaid
 graph TB
 subgraph "ECU Types"
-MD["Motor Driver ECU<br/>WS2812_PIN=48"]
-JS["Joystick ECU<br/>WS2812_PIN=18"]
+MD["Motor Driver ECU<br/>Traditional State Machine"]
+JS["Joystick ECU<br/>Enhanced Detection Logic"]
 end
 subgraph "LED Hardware"
 NP["NeoPixelBus Library"]
@@ -47,6 +55,7 @@ end
 subgraph "CAN Bus"
 FC["ForwarderCAN"]
 MSG["LED Control Messages"]
+TWAI["TWAI Hardware Monitoring"]
 end
 MD --> NP
 JS --> NP
@@ -54,6 +63,7 @@ NP --> WS
 MD --> FC
 JS --> FC
 FC --> MSG
+JS --> TWAI
 ```
 
 **Diagram sources**
@@ -68,69 +78,73 @@ FC --> MSG
 - [platformio.ini:17-64](file://platformio.ini#L17-L64)
 
 ## Core Components
-- NeoPixelBus initialization and pixel control
-- LED state machine with four operational modes:
-  - Normal operation: solid color (blue for motor driver, green for joystick)
-  - Offline: periodic blinking (red for motor driver, orange-brown for joystick)
-  - Fast blink warning: yellow for active communication
-  - Identification mode: blinking white for 3 seconds
-- Update timing logic with 50 ms refresh interval
-- Integration with ForwarderCAN for online/offline detection and CAN message processing
-- Hardware pin configuration via build flags
+- **NeoPixelBus initialization and pixel control** with enhanced state detection
+- **Advanced LED state machine** with priority-based status patterns:
+  - **Identification mode**: Flashing white for 3 seconds
+  - **CAN bus broken**: Blinking red (500ms) with comprehensive hardware monitoring
+  - **Motor ECU offline**: Solid red with separate timeout detection
+  - **Custom LED color**: Remote control via PF_LED_COLOR messages
+- **Comprehensive TWAI hardware state monitoring** including bus-off detection and error counters
+- **Priority-based status interpretation** with detailed troubleshooting guidance
+- **Enhanced update timing logic** with 50 ms refresh interval and sophisticated detection algorithms
+- **Integration with ForwarderCAN** for online/offline detection and CAN message processing
 
 Key implementation locations:
-- Motor Driver LED logic: [updateLED:153-182](file://src/ecu_motor_driver.cpp#L153-L182)
-- Joystick LED logic: [updateLED:74-101](file://src/ecu_joystick.cpp#L74-L101)
-- CAN message processing and LED triggers: [processCAN:184-275](file://src/ecu_motor_driver.cpp#L184-L275), [processCAN:118-148](file://src/ecu_joystick.cpp#L118-L148)
-- LED state machine and timers: [ecu_motor_driver.cpp:53-57](file://src/ecu_motor_driver.cpp#L53-L57), [ecu_joystick.cpp:55-58](file://src/ecu_joystick.cpp#L55-L58)
+- **Enhanced Joystick LED logic**: [updateLED:95-144](file://src/ecu_joystick.cpp#L95-L144)
+- **Motor Driver LED logic**: [updateLED:281-310](file://src/ecu_motor_driver.cpp#L281-L310)
+- **CAN message processing and LED triggers**: [processCAN:161-203](file://src/ecu_joystick.cpp#L161-L203), [processCAN:312-419](file://src/ecu_motor_driver.cpp#L312-L419)
+- **Enhanced detection algorithms**: [ecu_joystick.cpp:104-119](file://src/ecu_joystick.cpp#L104-L119)
 
 **Section sources**
-- [src/ecu_motor_driver.cpp:153-182](file://src/ecu_motor_driver.cpp#L153-L182)
-- [src/ecu_joystick.cpp:74-101](file://src/ecu_joystick.cpp#L74-L101)
-- [src/ecu_motor_driver.cpp:184-275](file://src/ecu_motor_driver.cpp#L184-L275)
-- [src/ecu_joystick.cpp:118-148](file://src/ecu_joystick.cpp#L118-L148)
+- [src/ecu_joystick.cpp:95-144](file://src/ecu_joystick.cpp#L95-L144)
+- [src/ecu_motor_driver.cpp:281-310](file://src/ecu_motor_driver.cpp#L281-L310)
+- [src/ecu_joystick.cpp:161-203](file://src/ecu_joystick.cpp#L161-L203)
+- [src/ecu_motor_driver.cpp:312-419](file://src/ecu_motor_driver.cpp#L312-L419)
 
 ## Architecture Overview
-The LED system integrates tightly with the main control loop and CAN subsystem. The update cycle runs at approximately 50 ms, checking the current state and applying the appropriate color or blink pattern.
+The enhanced LED system integrates with sophisticated detection logic and comprehensive hardware monitoring. The update cycle runs at approximately 50 ms, with priority-based evaluation of status conditions and detailed TWAI state monitoring.
 
 ```mermaid
 sequenceDiagram
 participant Loop as "Main Loop"
 participant LED as "updateLED()"
 participant CAN as "ForwarderCAN"
+participant TWAI as "TWAI Hardware"
 participant Strip as "NeoPixelBus"
 Loop->>LED : "Call updateLED()"
 LED->>LED : "Check identifyActive"
 alt "Identification Mode"
-LED->>Strip : "Set white or black (500ms blink)"
-else "Offline"
+LED->>Strip : "Set white or black (150ms blink)"
+else "CAN Bus Broken Detection"
 LED->>CAN : "isOnline()"
-CAN-->>LED : "false"
-LED->>Strip : "Set red or black (200ms blink)"
-else "Fast Blink Warning"
-LED->>LED : "blinkFast timer elapsed?"
-LED->>Strip : "Set yellow or black (100ms blink)"
+LED->>TWAI : "Get TWAI status info"
+TWAI-->>LED : "State, TX errors, RX errors"
+LED->>LED : "Check lastAnyMsgReceived"
+LED->>Strip : "Set red or black (500ms blink)"
+else "Motor ECU Offline"
+LED->>LED : "Check lastMotorEcuMsg timeout"
+LED->>Strip : "Set red (solid)"
 else "Normal Operation"
-LED->>CAN : "isOnline()"
-CAN-->>LED : "true"
-LED->>Strip : "Set configured color"
+LED->>Strip : "Set custom or default color"
 end
 LED->>Strip : "Show()"
 ```
 
 **Diagram sources**
-- [src/ecu_motor_driver.cpp:153-182](file://src/ecu_motor_driver.cpp#L153-L182)
-- [src/ecu_joystick.cpp:74-101](file://src/ecu_joystick.cpp#L74-L101)
-- [lib/ForwarderCAN/ForwarderCAN.h:81](file://lib/ForwarderCAN/ForwarderCAN.h#L81)
+- [src/ecu_joystick.cpp:95-144](file://src/ecu_joystick.cpp#L95-L144)
+- [lib/ForwarderCAN/ForwarderCAN.h:83](file://lib/ForwarderCAN/ForwarderCAN.h#L83)
 
 ## Detailed Component Analysis
 
-### LED State Machine
-The LED state machine evaluates conditions in this order:
-1. Identification mode: If active, alternate between white and black every 150 ms for 3 seconds
-2. Offline condition: If CAN reports offline, blink red/orange-brown at 200 ms intervals
-3. Fast blink warning: If recent CAN activity triggered a fast blink, blink yellow at 100 ms intervals for 100 ms
-4. Normal operation: Solid color based on configured RGB values
+### Enhanced LED State Machine
+The joystick ECU now implements a sophisticated priority-based state machine with comprehensive detection logic:
+
+**Priority Order (Highest to Lowest):**
+1. **Identification mode**: Flashing white for 3 seconds when PF_IDENTIFY received
+2. **CAN bus broken**: Blinking red (500ms) with TWAI hardware monitoring
+3. **Motor ECU offline**: Solid red when no messages from motor ECU (0x20) for 1+ second
+4. **Custom LED color**: Remote control via PF_LED_COLOR messages
+5. **Default green**: Full brightness when all systems normal
 
 ```mermaid
 flowchart TD
@@ -139,199 +153,188 @@ CheckIdentify --> |Yes| WhiteBlink["Blink white/black (150ms)"]
 WhiteBlink --> TimerExpired{"identifyTimer + 3000ms elapsed?"}
 TimerExpired --> |Yes| ClearIdentify["identifyActive = false"]
 TimerExpired --> |No| End(["Exit"])
-CheckIdentify --> |No| CheckOffline["CAN isOnline()?"]
-CheckOffline --> |No| OfflineBlink["Blink red/off-orange (200ms)"]
-OfflineBlink --> End
-CheckOffline --> |Yes| CheckFast["blinkFast?"]
-CheckFast --> |Yes| FastBlink["Blink yellow/black (100ms)"]
-FastBlink --> FastTimeout{"blinkTimer + 100ms elapsed?"}
-FastTimeout --> |Yes| ClearFast["blinkFast = false"]
-FastTimeout --> |No| End
-CheckFast --> |No| SetSolid["Set solid color"]
-SetSolid --> End
+CheckIdentify --> |No| CheckBusBroken["Check CAN bus broken"]
+CheckBusBroken --> |Yes| BusBrokenBlink["Blink red/black (500ms)"]
+BusBrokenBlink --> End
+CheckBusBroken --> |No| CheckMotorOffline["Check motor ECU offline"]
+CheckMotorOffline --> |Yes| MotorOfflineSolid["Solid red"]
+MotorOfflineSolid --> End
+CheckMotorOffline --> |No| CheckCustom["Custom LED color?"]
+CheckCustom --> |Yes| SetCustom["Set custom color"]
+CheckCustom --> |No| SetDefault["Set default green"]
+SetCustom --> End
+SetDefault --> End
 ```
 
 **Diagram sources**
-- [src/ecu_motor_driver.cpp:153-182](file://src/ecu_motor_driver.cpp#L153-L182)
-- [src/ecu_joystick.cpp:74-101](file://src/ecu_joystick.cpp#L74-L101)
+- [src/ecu_joystick.cpp:95-144](file://src/ecu_joystick.cpp#L95-L144)
 
 **Section sources**
-- [src/ecu_motor_driver.cpp:153-182](file://src/ecu_motor_driver.cpp#L153-L182)
-- [src/ecu_joystick.cpp:74-101](file://src/ecu_joystick.cpp#L74-L101)
+- [src/ecu_joystick.cpp:95-144](file://src/ecu_joystick.cpp#L95-L144)
+- [README.md:138-157](file://README.md#L138-L157)
+
+### Enhanced TWAI Hardware State Monitoring
+The joystick ECU implements comprehensive TWAI hardware state monitoring with multiple detection criteria:
+
+**CAN Bus Broken Detection Criteria:**
+1. **Message Timeout**: No CAN messages from other devices for 2+ seconds
+2. **TWAI State Monitoring**: 
+   - `TWAI_STATE_STOPPED` - TWAI driver stopped
+   - `TWAI_STATE_BUS_OFF` - Bus-off due to errors  
+   - `tx_error_counter >= 127` - High transmit error count
+3. **Hardware Loopback Filtering**: Filters own messages to avoid false positives in NO_ACK mode
+
+**Motor ECU Offline Detection:**
+- No CAN messages received from source address `0x20` for more than 1 second
+- Only triggers if CAN bus is NOT broken (bus check has priority)
+
+**Section sources**
+- [src/ecu_joystick.cpp:104-119](file://src/ecu_joystick.cpp#L104-L119)
+- [src/ecu_joystick.cpp:138-141](file://src/ecu_joystick.cpp#L138-L141)
+- [README.md:147-157](file://README.md#L147-L157)
 
 ### RGB Color Management
-- Motor Driver: Default blue (R:0, G:0, B:20) with brightness scaling applied during updates
-- Joystick: Default green (R:0, G:20, B:0) with brightness scaling applied during updates
-- Remote control: CAN message PF_LED_COLOR (0x20) allows setting R, G, B values for both ECUs
-- Brightness scaling: Joystick applies a brightness factor to reduce LED intensity
+- **Motor Driver**: Default blue (R:0, G:0, B:20) with brightness scaling applied during updates
+- **Joystick**: Default green (R:0, G:255, B:0) with brightness scaling applied during updates
+- **Remote control**: CAN message PF_LED_COLOR (0x20) allows setting R, G, B values for both ECUs
+- **Enhanced brightness scaling**: Joystick applies brightness factor to reduce LED intensity
 
 Implementation references:
-- Motor Driver defaults and update: [ecu_motor_driver.cpp:53-57](file://src/ecu_motor_driver.cpp#L53-L57), [updateLED:153-182](file://src/ecu_motor_driver.cpp#L153-L182)
-- Joystick defaults and update: [ecu_joystick.cpp:55-58](file://src/ecu_joystick.cpp#L55-L58), [updateLED:74-101](file://src/ecu_joystick.cpp#L74-L101)
-- Remote control message: [ForwarderCAN.h](file://lib/ForwarderCAN/ForwarderCAN.h#L43)
+- **Motor Driver defaults and update**: [ecu_motor_driver.cpp:60](file://src/ecu_motor_driver.cpp#L60), [updateLED:281-310](file://src/ecu_motor_driver.cpp#L281-L310)
+- **Enhanced Joystick defaults and update**: [ecu_joystick.cpp:58](file://src/ecu_joystick.cpp#L58), [updateLED:95-144](file://src/ecu_joystick.cpp#L95-L144)
+- **Remote control message**: [ForwarderCAN.h](file://lib/ForwarderCAN/ForwarderCAN.h#L43)
 
 **Section sources**
-- [src/ecu_motor_driver.cpp:53-57](file://src/ecu_motor_driver.cpp#L53-L57)
-- [src/ecu_motor_driver.cpp:153-182](file://src/ecu_motor_driver.cpp#L153-L182)
-- [src/ecu_joystick.cpp:55-58](file://src/ecu_joystick.cpp#L55-L58)
-- [src/ecu_joystick.cpp:74-101](file://src/ecu_joystick.cpp#L74-L101)
+- [src/ecu_motor_driver.cpp:60](file://src/ecu_motor_driver.cpp#L60)
+- [src/ecu_motor_driver.cpp:281-310](file://src/ecu_motor_driver.cpp#L281-L310)
+- [src/ecu_joystick.cpp:58](file://src/ecu_joystick.cpp#L58)
+- [src/ecu_joystick.cpp:95-144](file://src/ecu_joystick.cpp#L95-L144)
 - [lib/ForwarderCAN/ForwarderCAN.h:43](file://lib/ForwarderCAN/ForwarderCAN.h#L43)
 
-### Blinking Patterns and Timings
-- Identification mode: Alternates between white and black every 150 ms for 3 seconds
-- Offline mode: Red or orange-brown blink every 200 ms
-- Fast blink warning: Yellow blink every 100 ms for 100 ms after receiving joystick or solenoid commands
-- Update interval: 50 ms polling in the LED update function
+### Enhanced Blinking Patterns and Timings
+- **Identification mode**: Alternates between white and black every 150 ms for 3 seconds
+- **CAN bus broken**: Red blink every 500 ms with comprehensive hardware monitoring
+- **Motor ECU offline**: Solid red (80 intensity) when no messages from motor ECU (0x20) for 1+ second
+- **Update interval**: 50 ms polling in the LED update function
 
-Timing references:
-- Identification: [ecu_motor_driver.cpp:158-166](file://src/ecu_motor_driver.cpp#L158-L166), [ecu_joystick.cpp:83-91](file://src/ecu_joystick.cpp#L83-L91)
-- Offline: [ecu_motor_driver.cpp:167-172](file://src/ecu_motor_driver.cpp#L167-L172), [ecu_joystick.cpp:92-97](file://src/ecu_joystick.cpp#L92-L97)
-- Fast blink: [ecu_motor_driver.cpp:173-178](file://src/ecu_motor_driver.cpp#L173-L178), [ecu_motor_driver.cpp:338-340](file://src/ecu_motor_driver.cpp#L338-L340)
-- Update interval: [ecu_motor_driver.cpp](file://src/ecu_motor_driver.cpp#L155), [ecu_joystick.cpp](file://src/ecu_joystick.cpp#L76)
-
-**Section sources**
-- [src/ecu_motor_driver.cpp:158-178](file://src/ecu_motor_driver.cpp#L158-L178)
-- [src/ecu_motor_driver.cpp:338-340](file://src/ecu_motor_driver.cpp#L338-L340)
-- [src/ecu_joystick.cpp:83-97](file://src/ecu_joystick.cpp#L83-L97)
-- [src/ecu_motor_driver.cpp:155](file://src/ecu_motor_driver.cpp#L155)
-- [src/ecu_joystick.cpp:76](file://src/ecu_joystick.cpp#L76)
-
-### Identification Mode
-- Triggered by CAN message PF_IDENTIFY (0x22) addressed to broadcast or specific ECU
-- Starts a 3-second timer; during this period, the LED alternates between white and black
-- After 3 seconds, identification mode deactivates automatically
-
-References:
-- Trigger: [ecu_motor_driver.cpp:227-233](file://src/ecu_motor_driver.cpp#L227-L233), [ecu_joystick.cpp:131-135](file://src/ecu_joystick.cpp#L131-L135)
-- Execution: [ecu_motor_driver.cpp:158-166](file://src/ecu_motor_driver.cpp#L158-L166), [ecu_joystick.cpp:83-91](file://src/ecu_joystick.cpp#L83-L91)
+**Enhanced Timing References:**
+- **Identification**: [ecu_joystick.cpp:121-130](file://src/ecu_joystick.cpp#L121-L130)
+- **CAN bus broken**: [ecu_joystick.cpp:131-137](file://src/ecu_joystick.cpp#L131-L137)
+- **Motor ECU offline**: [ecu_joystick.cpp:138-141](file://src/ecu_joystick.cpp#L138-L141)
+- **Enhanced update interval**: [ecu_joystick.cpp:97](file://src/ecu_joystick.cpp#L97)
 
 **Section sources**
-- [src/ecu_motor_driver.cpp:227-233](file://src/ecu_motor_driver.cpp#L227-L233)
-- [src/ecu_joystick.cpp:131-135](file://src/ecu_joystick.cpp#L131-L135)
-- [src/ecu_motor_driver.cpp:158-166](file://src/ecu_motor_driver.cpp#L158-L166)
-- [src/ecu_joystick.cpp:83-91](file://src/ecu_joystick.cpp#L83-L91)
+- [src/ecu_joystick.cpp:121-141](file://src/ecu_joystick.cpp#L121-L141)
+- [src/ecu_motor_driver.cpp:295-307](file://src/ecu_motor_driver.cpp#L295-L307)
+- [src/ecu_joystick.cpp:97](file://src/ecu_joystick.cpp#L97)
 
-### Update Timing Logic
-- LED update function checks a 50 ms interval before processing state changes
-- Fast blink warning resets after 100 ms
-- Identification mode resets after 3 seconds
-- Integration with main loop: LED update is called in both ECU variants' main loops
-
-References:
-- Interval check: [ecu_motor_driver.cpp](file://src/ecu_motor_driver.cpp#L155), [ecu_joystick.cpp](file://src/ecu_joystick.cpp#L76)
-- Reset logic: [ecu_motor_driver.cpp:338-340](file://src/ecu_motor_driver.cpp#L338-L340)
-- Main loop integration: [ecu_motor_driver.cpp](file://src/ecu_motor_driver.cpp#L347), [ecu_joystick.cpp](file://src/ecu_joystick.cpp#L261)
+### Enhanced Identification Mode
+- **Triggered by CAN message PF_IDENTIFY (0x22)** addressed to broadcast or specific ECU
+- **Enhanced timing**: Starts a 3-second timer with 150 ms blink interval
+- **Automatic deactivation**: Identification mode deactivates automatically after 3 seconds
+- **Priority override**: Takes highest priority in the state machine
 
 **Section sources**
-- [src/ecu_motor_driver.cpp:155](file://src/ecu_motor_driver.cpp#L155)
-- [src/ecu_joystick.cpp:76](file://src/ecu_joystick.cpp#L76)
-- [src/ecu_motor_driver.cpp:338-340](file://src/ecu_motor_driver.cpp#L338-L340)
-- [src/ecu_motor_driver.cpp:347](file://src/ecu_motor_driver.cpp#L347)
-- [src/ecu_joystick.cpp:261](file://src/ecu_joystick.cpp#L261)
+- [src/ecu_joystick.cpp:186-190](file://src/ecu_joystick.cpp#L186-L190)
+- [src/ecu_joystick.cpp:121-130](file://src/ecu_joystick.cpp#L121-L130)
 
-### Integration with Main Control Loop
-- Both ECUs call their respective LED update functions in the main loop
-- Motor Driver: LED update interleaved with CAN processing, axis updates, heartbeat broadcasting, and OTA loop
-- Joystick: LED update interleaved with input reading, CAN processing, periodic heartbeat, and OTA loop
-
-References:
-- Motor Driver loop: [ecu_motor_driver.cpp:327-352](file://src/ecu_motor_driver.cpp#L327-L352)
-- Joystick loop: [ecu_joystick.cpp:203-265](file://src/ecu_joystick.cpp#L203-L265)
+### Enhanced Update Timing Logic
+- **LED update function** checks 50 ms interval before processing state changes
+- **Enhanced reset logic** with automatic identification mode deactivation
+- **Priority-based state evaluation** with comprehensive detection algorithms
+- **Integration with main loop**: LED update called in joystick ECU main loop
 
 **Section sources**
-- [src/ecu_motor_driver.cpp:327-352](file://src/ecu_motor_driver.cpp#L327-L352)
-- [src/ecu_joystick.cpp:203-265](file://src/ecu_joystick.cpp#L203-L265)
+- [src/ecu_joystick.cpp:97](file://src/ecu_joystick.cpp#L97)
+- [src/ecu_joystick.cpp:128-130](file://src/ecu_joystick.cpp#L128-L130)
+- [src/ecu_joystick.cpp:307](file://src/ecu_joystick.cpp#L307)
 
-### LED Pin Configuration and NeoPixelBus Setup
-- Motor Driver: WS2812_PIN=48 (build flag), NeoPixelBus initialized with GRB feature and 800 Kbps method
-- Joystick: WS2812_PIN=18 (build flag), NeoPixelBus initialized with GRB feature and 800 Kbps method
-- Library dependency: NeoPixelBus v2.8.3 included via platformio.ini
-
-References:
-- Build flags: [platformio.ini](file://platformio.ini#L25), [platformio.ini](file://platformio.ini#L41)
-- Initialization: [ecu_motor_driver.cpp](file://src/ecu_motor_driver.cpp#L43), [ecu_joystick.cpp](file://src/ecu_joystick.cpp#L42)
-- Library dependency: [platformio.ini](file://platformio.ini#L11)
+### Enhanced Integration with Main Control Loop
+- **Joystick ECU**: LED update integrated with input reading, CAN processing, and TWAI diagnostics
+- **Motor Driver ECU**: LED update maintains traditional state machine approach
+- **Enhanced diagnostics**: TWAI status monitoring and comprehensive bus health tracking
 
 **Section sources**
-- [platformio.ini:25](file://platformio.ini#L25)
-- [platformio.ini:41](file://platformio.ini#L41)
+- [src/ecu_joystick.cpp:266-307](file://src/ecu_joystick.cpp#L266-L307)
+- [src/ecu_motor_driver.cpp:540-613](file://src/ecu_motor_driver.cpp#L540-L613)
+
+### Enhanced LED Pin Configuration and NeoPixelBus Setup
+- **Motor Driver**: WS2812_PIN=39 (build flag), NeoPixelBus initialized with GRB feature and 800 Kbps method
+- **Enhanced Joystick**: WS2812_PIN=4 (build flag), NeoPixelBus initialized with GRB feature and 800 Kbps method
+- **Library dependency**: NeoPixelBus v2.8.3 included via platformio.ini
+
+**Section sources**
+- [platformio.ini:32](file://platformio.ini#L32)
+- [platformio.ini:106](file://platformio.ini#L106)
 - [platformio.ini:11](file://platformio.ini#L11)
 - [src/ecu_motor_driver.cpp:43](file://src/ecu_motor_driver.cpp#L43)
-- [src/ecu_joystick.cpp:42](file://src/ecu_joystick.cpp#L42)
+- [src/ecu_joystick.cpp:45](file://src/ecu_joystick.cpp#L45)
 
 ## Dependency Analysis
-The LED system depends on:
-- ForwarderCAN for online/offline state and CAN message processing
-- NeoPixelBus for pixel color setting and display
-- Build flags for pin configuration
-- CAN protocol definitions for LED control messages
+The enhanced LED system depends on:
+- **ForwarderCAN** for online/offline state and comprehensive CAN message processing
+- **NeoPixelBus** for pixel color setting and display with enhanced state detection
+- **TWAI hardware monitoring** for comprehensive bus state assessment
+- **Build flags** for pin configuration and ECU type selection
+- **Enhanced CAN protocol definitions** for LED control messages and status interpretation
 
 ```mermaid
 graph LR
-CAN["ForwarderCAN"] --> LED["LED State Machine"]
+CAN["ForwarderCAN"] --> LED["Enhanced LED State Machine"]
+TWAI["TWAI Hardware Monitoring"] --> LED
 Flags["Build Flags<br/>WS2812_PIN"] --> LED
 LED --> Strip["NeoPixelBus"]
 LED --> CAN
 ```
 
 **Diagram sources**
-- [lib/ForwarderCAN/ForwarderCAN.h:81](file://lib/ForwarderCAN/ForwarderCAN.h#L81)
-- [platformio.ini:25](file://platformio.ini#L25)
-- [platformio.ini:41](file://platformio.ini#L41)
+- [lib/ForwarderCAN/ForwarderCAN.h:83](file://lib/ForwarderCAN/ForwarderCAN.h#L83)
+- [platformio.ini:32](file://platformio.ini#L32)
+- [platformio.ini:106](file://platformio.ini#L106)
 - [src/ecu_motor_driver.cpp:43](file://src/ecu_motor_driver.cpp#L43)
-- [src/ecu_joystick.cpp:42](file://src/ecu_joystick.cpp#L42)
+- [src/ecu_joystick.cpp:45](file://src/ecu_joystick.cpp#L45)
 
 **Section sources**
-- [lib/ForwarderCAN/ForwarderCAN.h:81](file://lib/ForwarderCAN/ForwarderCAN.h#L81)
-- [platformio.ini:25](file://platformio.ini#L25)
-- [platformio.ini:41](file://platformio.ini#L41)
+- [lib/ForwarderCAN/ForwarderCAN.h:83](file://lib/ForwarderCAN/ForwarderCAN.h#L83)
+- [platformio.ini:32](file://platformio.ini#L32)
+- [platformio.ini:106](file://platformio.ini#L106)
 - [src/ecu_motor_driver.cpp:43](file://src/ecu_motor_driver.cpp#L43)
-- [src/ecu_joystick.cpp:42](file://src/ecu_joystick.cpp#L42)
+- [src/ecu_joystick.cpp:45](file://src/ecu_joystick.cpp#L45)
 
 ## Performance Considerations
-- LED update runs at ~50 ms, minimizing CPU overhead while maintaining responsive visual feedback
-- Brightness scaling reduces power consumption and prevents over-bright LEDs
-- Fast blink warning duration (100 ms) balances visibility with minimal CPU usage
-- Identification mode duration (3 seconds) provides sufficient time for operator recognition
+- **Enhanced LED update** runs at ~50 ms with priority-based evaluation, minimizing CPU overhead while maintaining responsive visual feedback
+- **Comprehensive TWAI monitoring** adds minimal overhead with efficient hardware state checks
+- **Enhanced detection algorithms** balance accuracy with minimal CPU usage through selective monitoring
+- **Priority-based status interpretation** ensures critical issues are highlighted immediately
+- **Improved brightness scaling** reduces power consumption and prevents over-bright LEDs
 
 ## Troubleshooting Guide
-Common LED behavior scenarios and diagnostics:
+**Enhanced LED behavior scenarios with priority-based interpretation:**
 
-- Solid blue LED (Motor Driver):
-  - Indicates normal operation with CAN online
-  - Verify CAN bus connectivity and address claiming success
+**Priority 1 - Critical Issues:**
+- **Blinking red (500ms)**: CAN bus broken - check TWAI hardware state and bus connections
+- **Solid red**: Motor ECU offline - verify motor ECU power and CAN wiring
 
-- Solid green LED (Joystick):
-  - Indicates normal operation with CAN online
-  - Verify CAN bus connectivity and address claiming success
+**Priority 2 - System Status:**
+- **Solid green**: Normal operation with CAN online and motor ECU responding
+- **Flashing white**: Identification mode activation - verify remote control command delivery
 
-- Periodic red blink (Motor Driver) or orange-brown blink (Joystick):
-  - Indicates CAN offline state
-  - Check CAN wiring, termination, and bus-off recovery
-  - Monitor TWAI status via serial output for bus errors
+**Priority 3 - Configuration:**
+- **Custom RGB**: LED color overridden by PF_LED_COLOR command
+- **No LED response**: Check LED wiring and power supply
 
-- Brief yellow blink:
-  - Indicates recent joystick or solenoid activity
-  - Confirm CAN message reception and processing
-
-- White blinking for 3 seconds:
-  - Indicates identification mode activation
-  - Triggered by PF_IDENTIFY message; verify remote control command delivery
-
-Diagnostic procedures:
-- Use serial monitor to observe CAN/TWAI status and LED behavior correlation
-- Temporarily disable LED updates to isolate CAN bus issues
-- Verify build flags for correct WS2812_PIN assignment
-- Test with known-good LED strip to eliminate hardware faults
+**Enhanced Diagnostic Procedures:**
+- **Use serial monitor** to observe TWAI status and LED behavior correlation
+- **Monitor TWAI state** via serial output for bus errors and hardware issues
+- **Filter own messages** to avoid false positives in NO_ACK mode
+- **Verify build flags** for correct WS2812_PIN assignment
+- **Test with known-good LED strip** to eliminate hardware faults
 
 **Section sources**
-- [src/ecu_motor_driver.cpp:167-172](file://src/ecu_motor_driver.cpp#L167-L172)
-- [src/ecu_joystick.cpp:92-97](file://src/ecu_joystick.cpp#L92-L97)
-- [src/ecu_motor_driver.cpp:227-233](file://src/ecu_motor_driver.cpp#L227-L233)
-- [src/ecu_joystick.cpp:131-135](file://src/ecu_joystick.cpp#L131-L135)
-- [src/ecu_motor_driver.cpp:338-340](file://src/ecu_motor_driver.cpp#L338-L340)
-- [src/ecu_motor_driver.cpp:290-325](file://src/ecu_motor_driver.cpp#L290-L325)
-- [src/ecu_joystick.cpp:163-201](file://src/ecu_joystick.cpp#L163-L201)
+- [src/ecu_joystick.cpp:131-141](file://src/ecu_joystick.cpp#L131-L141)
+- [src/ecu_motor_driver.cpp:295-307](file://src/ecu_motor_driver.cpp#L295-L307)
+- [src/ecu_joystick.cpp:186-190](file://src/ecu_joystick.cpp#L186-L190)
+- [README.md:126-157](file://README.md#L126-L157)
 
 ## Conclusion
-The NeoPixel LED status indicator system provides clear, standardized visual feedback across both ECU variants. Its state machine cleanly maps operational conditions to distinct visual patterns, with precise timing controls and efficient update scheduling. The system integrates seamlessly with the CAN bus and can be remotely controlled via PF_LED_COLOR messages, enabling flexible customization and diagnostics.
+The enhanced NeoPixel LED status indicator system provides sophisticated, priority-based visual feedback across both ECU variants. The joystick ECU now features comprehensive TWAI hardware state monitoring, priority-based status interpretation, and detailed troubleshooting guidance. The enhanced detection algorithms ensure critical issues are highlighted immediately while maintaining clear status representation for normal operation. The system integrates seamlessly with the CAN bus and provides comprehensive diagnostic capabilities through serial monitoring and LED pattern interpretation.

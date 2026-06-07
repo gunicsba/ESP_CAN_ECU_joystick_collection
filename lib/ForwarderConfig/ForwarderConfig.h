@@ -54,6 +54,7 @@ struct AxisConfig {
     uint8_t pwmMax;          // 0-255 -> 0-4095
     uint8_t flags;           // FLAG_AXIS_ENABLED, FLAG_AXIS_BIDIRECTIONAL
     uint8_t buttonGate;      // BUTTON_GATE_NONE, BUTTON_GATE_BTN1_PRESSED, BUTTON_GATE_BTN1_RELEASED
+    uint8_t curveExp;        // Exponent * 2: 2=linear(1.0), 3=1.5, 4=2.0, 5=2.5, 6=3.0
 
     bool isEnabled() const { return flags & FLAG_AXIS_ENABLED; }
     bool isBidirectional() const { return flags & FLAG_AXIS_BIDIRECTIONAL; }

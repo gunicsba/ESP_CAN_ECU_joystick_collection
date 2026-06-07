@@ -14,6 +14,13 @@
 - [web_state.cpp](file://src/web_state.cpp)
 </cite>
 
+## Update Summary
+**Changes Made**
+- Updated Safety and Defaults section to reflect refined motor driver configuration defaults
+- Modified Factory Default Configuration table to show new conservative deadband settings (307-717) and reduced PWM ranges (20-100)
+- Updated Safety Mechanisms diagram to reflect new default values
+- Enhanced Troubleshooting Guide with new default values for diagnosis
+
 ## Table of Contents
 1. [Introduction](#introduction)
 2. [System Architecture](#system-architecture)
@@ -523,16 +530,24 @@ RUNTIME_MONITOR --> SAFETY_CHECK
 
 ### Factory Default Configuration
 
-The system provides intelligent factory defaults that establish sensible initial behavior:
+**Updated** The system now provides refined factory defaults with more conservative deadband settings and reduced PWM output ranges for improved sensitivity and safety:
 
 | Component | Default Setting | Purpose |
 |-----------|----------------|---------|
 | PCA Count | 2 | Support dual PCA9685 expansion |
-| Deadband Range | 472-552 | Prevent accidental solenoid activation |
-| PWM Range | 50-200 | Safe operational range (20%-78%) |
+| Deadband Range | 307-717 | **Refined conservative range (±20% from center)** |
+| PWM Range | 20-100 | **Reduced operational range (8%-39%)** |
 | Bidirectional Axes | Enabled for first 4 axes | Primary joystick controls |
-| Channel Mapping | Joy1 Pot1→Ch0+1, Joy1 Pot2→Ch2+3 | Standard vehicle control layout |
+| Channel Mapping | Joy1 Pot1→Ch0+1, Joy1 Pot2→Ch2+3, Joy2 Pot1→Ch4+5, Joy2 Pot2→Ch6+7 | Standard vehicle control layout |
 | Safety Timeout | 500ms | Immediate solenoid shutdown on communication loss |
+
+**New Conservative Settings Details:**
+- **Deadband Min:** 307 (48% of 1023 ADC range)
+- **Deadband Max:** 717 (70% of 1023 ADC range)  
+- **PWM Min:** 20 (8% of 255 range)
+- **PWM Max:** 100 (39% of 255 range)
+
+These refined defaults provide better sensitivity for small joystick movements while maintaining safety margins, allowing for more precise control of hydraulic systems.
 
 ### Recovery Mechanisms
 
@@ -736,7 +751,9 @@ HARDWARE_DIAG --> SYSTEM_READY
 
 ### Remote Diagnostics via Web Interface
 
-The web interface provides comprehensive remote diagnostic capabilities:
+**Updated** The web interface now reflects the new conservative default values for accurate diagnosis:
+
+The web interface provides comprehensive remote diagnostic capabilities with updated default value expectations:
 
 ```mermaid
 sequenceDiagram
@@ -762,6 +779,11 @@ TECH->>WEB : View Logs
 WEB->>LOG : Retrieve Log Entries
 LOG->>WEB : Return Log Data
 WEB->>TECH : Display Log Information
+note right of WEB
+New Default Values :
+- Deadband : 307-717
+- PWM : 20-100
+end note
 ```
 
 **Diagram sources**
@@ -776,6 +798,8 @@ WEB->>TECH : Display Log Information
 ## Conclusion
 
 The Auto-Configuration System represents a sophisticated approach to embedded system configuration management, combining hardware abstraction, persistent storage, and user-friendly interfaces into a cohesive solution. The system's modular architecture, comprehensive safety mechanisms, and web-based management capabilities make it well-suited for complex industrial applications requiring reliable and flexible configuration management.
+
+**Updated** Recent improvements have refined the motor driver configuration defaults with more conservative deadband settings (307-717) and reduced PWM output ranges (20-100), providing better sensitivity for small joystick movements while maintaining safety margins. These changes demonstrate the system's commitment to balancing operational precision with safety reliability.
 
 Key strengths of the system include its intelligent auto-configuration capabilities, robust persistence layer using NVS storage, comprehensive web interface for remote management, and extensive safety mechanisms ensuring reliable operation. The modular design allows for easy extension and modification while maintaining system stability and performance.
 
