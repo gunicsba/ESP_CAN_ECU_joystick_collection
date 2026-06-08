@@ -28,6 +28,28 @@ Replaces a failed factory controller with a robust, open-source solution using J
 - **MCU**: LilyGO T-CAN board (ESP32 with built-in CAN transceiver)
 - **Motor driver PCB**: PCA9685 I2C PWM controller with 8 MOSFET outputs
 
+### Joystick used in this project
+
+The joystick used for this project is this model:
+
+- AliExpress listing: https://www.aliexpress.com/item/1005001844154962.html
+
+#### 3rd axis wiring
+
+For the 3rd axis on the joystick:
+
+- **2x yellow wires**: button
+- **White + red**: GND + power
+- **Black**: signal
+
+> The signal wire being black is a bit unintuitive, but that is how this joystick is wired.
+
+### 3D printable joystick case
+
+There is also a 3D-printable case for the joystick available in this repository.
+
+![3D printable joystick case](img/3D_joystick.png)
+
 ## CAN Protocol
 
 - **Bitrate**: 250 kbps
@@ -150,7 +172,7 @@ The WS2812B RGB LED on the joystick ECU provides visual status feedback:
 - `TWAI_STATE_BUS_OFF` — Bus-off due to errors
 - `tx_error_counter >= 127` — High transmit error count
 
-> **Note:** In `TWAI_MODE_NO_ACK`, the ESP32 may receive its own transmitted messages (loopback). The detection filters these out by checking `sa != g_can->getAddress()` so that a disconnected CAN cable is properly detected.
+> **Note:** In `TWAI_MODE_NO_ACK`, the ESP32 may receive its own transmitted messages (loopback). The detection filters these out by checking `sa != g_can->getAddress()` so that a disconnected CAN bus is still correctly detected.
 
 **Motor ECU Offline** is detected when:
 - No CAN messages received from source address `0x20` for more than 1 second
@@ -191,6 +213,24 @@ After booting:
 2. Password: `12345678`
 3. Open http://192.168.4.1
 4. Upload a `.bin` firmware file
+
+### Dashboard screenshots
+
+#### Modules overview
+
+![Modules overview](img/doc_UI_modules.png)
+
+#### Outputs view
+
+![Outputs view](img/doc_UI_outputs.png)
+
+#### Deadband setup
+
+![Deadband setup](img/doc_UI_deadband.png)
+
+#### Dashboard
+
+![Dashboard](img/doc_UI_dashboard.png)
 
 To produce a `.bin` for OTA:
 ```bash
