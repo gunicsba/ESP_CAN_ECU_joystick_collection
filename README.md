@@ -1,26 +1,26 @@
 # Forwarder CAN Controller
 
 ESP32-based CAN bus control system for a forwarder (logging machine) hydraulic valve block.
-Replaces a failed factory controller with a robust, open-source solution using J1939-like addressing over 250 kbps CAN.
+It replaces a failed factory controller with a robust, open-source solution using J1939-like addressing over a 250 kbps CAN bus.
 
-## Architecture
+## Overview
 
-3 ECUs on a single 250 kbps CAN bus:
+This project is split into three ECUs on one shared CAN network:
 
 | ECU | Address | Role |
 |-----|---------|------|
-| Motor Driver | `0x20` | Controls 8 solenoids via PCA9685 PWM driver |
-| Joystick 1 | `0x21` | Reads 3 pots + 2 buttons, publishes on CAN |
-| Joystick 2 | `0x22` | Reads 3 pots + 2 buttons, publishes on CAN |
+| Motor Driver | `0x20` | Controls 8 solenoids via a PCA9685 PWM driver |
+| Joystick 1 | `0x21` | Reads 3 potentiometers + 2 buttons and publishes data on CAN |
+| Joystick 2 | `0x22` | Reads 3 potentiometers + 2 buttons and publishes data on CAN |
 
 ## Hardware
 
 ### T-CAN485 (LilyGO) - Joystick ECU
 
 - **MCU**: ESP32 (regular, not S3) with built-in TJA1050 CAN transceiver
-- **CAN pins**: TX=GPIO27, RX=GPIO26
-- **Transceiver control**: GPIO16 (ME2107_EN, must be HIGH), GPIO23 (SPEED_MODE, LOW = high-speed)
-- **Joystick inputs**: 3x potentiometers (GPIO32, 33, 34) + 2x buttons (GPIO12, 5)
+- **CAN pins**: TX = GPIO27, RX = GPIO26
+- **Transceiver control**: GPIO16 (`ME2107_EN`, must be HIGH), GPIO23 (`SPEED_MODE`, LOW = high-speed)
+- **Joystick inputs**: 3 potentiometers on GPIO32, GPIO33, GPIO34 + 2 buttons on GPIO12 and GPIO5
 - **Status LED**: WS2812B on GPIO18
 
 ### Motor Driver ECU
@@ -28,13 +28,15 @@ Replaces a failed factory controller with a robust, open-source solution using J
 - **MCU**: LilyGO T-CAN board (ESP32 with built-in CAN transceiver)
 - **Motor driver PCB**: PCA9685 I2C PWM controller with 8 MOSFET outputs
 
+## Joystick Hardware
+
 ### Joystick used in this project
 
-The joystick used for this project is this model:
+This project uses the following joystick model:
 
 - AliExpress listing: https://www.aliexpress.com/item/1005001844154962.html
 
-#### 3rd axis wiring
+### 3rd axis wiring
 
 For the 3rd axis on the joystick:
 
@@ -42,11 +44,13 @@ For the 3rd axis on the joystick:
 - **White + red**: GND + power
 - **Black**: signal
 
-> The signal wire being black is a bit unintuitive, but that is how this joystick is wired.
+> The black wire is the signal wire, which is a bit unintuitive, but that is how this joystick is wired.
+
+## 3D Printed Parts
 
 ### 3D printable joystick case
 
-There is also a 3D-printable case for the joystick available in this repository.
+A 3D-printable case for the joystick is also included in this repository.
 
 ![3D printable joystick case](img/3D_joystick.png)
 
@@ -75,8 +79,8 @@ All messages are broadcast (PS = `0xFF`) with priority 6.
 | `0x10` | `PF_JOYSTICK_POT1` | 25Hz | 2 | Potentiometer 1 value, little-endian (10-bit, 0-1023) |
 | `0x11` | `PF_JOYSTICK_POT2` | 25Hz | 2 | Potentiometer 2 value, little-endian (10-bit, 0-1023) |
 | `0x12` | `PF_JOYSTICK_POT3` | 25Hz | 2 | Potentiometer 3 value, little-endian (10-bit, 0-1023) |
-| `0x13` | `PF_JOYSTICK_BUTTONS` | 25Hz | 1 | Button bitmask: bit0=BTN1, bit1=BTN2 |
-| `0x30` | `PF_HEARTBEAT` | 1Hz | 8 | Status/heartbeat (see below) |
+| `0x13` | `PF_JOYSTICK_BUTTONS` | 25Hz | 1 | Button bitmask: bit0 = BTN1, bit1 = BTN2 |
+| `0x30` | `PF_HEARTBEAT` | 1Hz | 8 | Status/heartbeat |
 
 #### Potentiometer Data Format
 
@@ -85,7 +89,7 @@ Byte 0: value & 0xFF        (low byte)
 Byte 1: (value >> 8) & 0xFF (high byte)
 ```
 
-Example: value 512 → `data[0]=0x00, data[1]=0x02`
+Example: value 512 → `data[0] = 0x00, data[1] = 0x02`
 
 #### Button Data Format
 
@@ -96,7 +100,7 @@ Byte 0: bitmask
   bits 2-7: reserved (0)
 ```
 
-Example: both buttons pressed → `data[0]=0x03`
+Example: both buttons pressed → `data[0] = 0x03`
 
 #### Heartbeat Data Format (PF `0x30`)
 
@@ -150,10 +154,10 @@ Byte 6-7: reserved (0)
 The WS2812B RGB LED on the joystick ECU provides visual status feedback:
 
 | LED Pattern | Meaning | Condition |
-|-------------|---------|----------|
+|-------------|---------|-----------|
 | **Solid GREEN** (full brightness) | Normal operation | CAN bus online, motor ECU responding |
 | **Solid RED** | Motor ECU offline | No CAN messages from motor ECU (`0x20`) for 1+ second |
-| **Blinking RED** (500ms) | CAN bus broken | No CAN messages from other devices for 2+ seconds |
+| **Blinking RED** (500 ms) | CAN bus broken | No CAN messages from other devices for 2+ seconds |
 | **Flashing WHITE** | Identify mode | `PF_IDENTIFY` message received, lasts 3 seconds |
 | **Custom RGB** | Remote command | `PF_LED_COLOR` message overrides default color |
 
@@ -164,7 +168,7 @@ The WS2812B RGB LED on the joystick ECU provides visual status feedback:
 2. CAN bus broken (blinking red) — message timeout + TWAI hardware check
 3. Motor ECU offline (solid red) — message timeout
 4. Custom LED color from `PF_LED_COLOR` command
-5. Default green (0, 255, 0)
+5. Default green (`0, 255, 0`)
 
 **CAN Bus Broken** is detected when any of:
 - No CAN messages from **other devices** for 2+ seconds (own messages filtered to avoid loopback false negatives in `TWAI_MODE_NO_ACK`)
@@ -175,8 +179,8 @@ The WS2812B RGB LED on the joystick ECU provides visual status feedback:
 > **Note:** In `TWAI_MODE_NO_ACK`, the ESP32 may receive its own transmitted messages (loopback). The detection filters these out by checking `sa != g_can->getAddress()` so that a disconnected CAN bus is still correctly detected.
 
 **Motor ECU Offline** is detected when:
-- No CAN messages received from source address `0x20` for more than 1 second
-- Only triggers if CAN bus is NOT broken (bus check has priority)
+- No CAN messages are received from source address `0x20` for more than 1 second
+- It only triggers if the CAN bus is **not** broken (bus check has priority)
 
 ## Building & Flashing
 
@@ -214,51 +218,55 @@ After booting:
 3. Open http://192.168.4.1
 4. Upload a `.bin` firmware file
 
-### Dashboard screenshots
-
-#### Modules overview
-
-![Modules overview](img/doc_UI_modules.png)
-
-#### Outputs view
-
-![Outputs view](img/doc_UI_outputs.png)
-
-#### Deadband setup
-
-![Deadband setup](img/doc_UI_deadband.png)
-
-#### Dashboard
-
-![Dashboard](img/doc_UI_dashboard.png)
-
 To produce a `.bin` for OTA:
+
 ```bash
 pio run -e joystick1
 # The .bin will be in .pio/build/joystick1/firmware.bin
 ```
 
+## Screenshots
+
+### Modules overview
+
+![Modules overview](img/doc_UI_modules.png)
+
+### Outputs view
+
+![Outputs view](img/doc_UI_outputs.png)
+
+### Deadband setup
+
+![Deadband setup](img/doc_UI_deadband.png)
+
+### Dashboard
+
+![Dashboard](img/doc_UI_dashboard.png)
+
 ## Safety Features
 
 - **Address claiming**: J1939-style startup arbitration ensures no address collisions
-- **Solenoid timeout**: Motor driver shuts off all solenoids if no CAN command received within 500 ms
+- **Solenoid timeout**: Motor driver shuts off all solenoids if no CAN command is received within 500 ms
 - **Bus-off recovery**: Automatic TWAI recovery on CAN errors
 - **Heartbeat**: All ECUs broadcast status every 1 second
 
 ## Project Structure
 
 ```
-forwarderke/
+ESP_CAN_ECU_joystick_collection/
+├── 3D/
+├── img/
 ├── lib/
-│   └── ForwarderCAN/         # Shared CAN/J1939 library
+│   └── ForwarderCAN/
 ├── src/
-│   ├── main.cpp              # Entry point (build flag selects ECU type)
-│   ├── ecu_motor_driver.cpp  # Motor driver logic
-│   ├── ecu_joystick.cpp      # Joystick logic
-│   ├── ota_webserver.cpp     # Optional Wi-Fi OTA web UI
-│   └── *.h                   # Headers
-├── platformio.ini            # Build environments
-└── README.md                 # This file
+│   ├── main.cpp
+│   ├── ecu_motor_driver.cpp
+│   ├── ecu_joystick.cpp
+│   ├── ota_webserver.cpp
+│   └── *.h
+├── platformio.ini
+├── build_flash.bat
+└── README.md
 ```
 
 ## License
