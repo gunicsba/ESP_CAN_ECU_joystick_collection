@@ -13,6 +13,16 @@ This project is split into three ECUs on one shared CAN network:
 | Joystick 1 | `0x21` | Reads 3 potentiometers + 2 buttons and publishes data on CAN |
 | Joystick 2 | `0x22` | Reads 3 potentiometers + 2 buttons and publishes data on CAN |
 
+## Demo Video
+
+See the joystick and CAN controller project in action:
+
+- https://youtube.com/shorts/DkzHTf-jfCc?is=lRpg4t4KHVOdaWYg
+
+## Why this project matters
+
+This repository documents an open-source embedded controller for forestry machinery, specifically a forwarder crane control system with CAN bus joysticks, motor drivers, and hydraulic solenoid outputs. It is useful for anyone building or repairing custom CAN-based mobile machinery controls using ESP32 and PlatformIO.
+
 ## Hardware
 
 ### T-CAN485 (LilyGO) - Joystick ECU
@@ -176,7 +186,7 @@ The WS2812B RGB LED on the joystick ECU provides visual status feedback:
 - `TWAI_STATE_BUS_OFF` — Bus-off due to errors
 - `tx_error_counter >= 127` — High transmit error count
 
-> **Note:** In `TWAI_MODE_NO_ACK`, the ESP32 may receive its own transmitted messages (loopback). The detection filters these out by checking `sa != g_can->getAddress()` so that a disconnected CAN bus is still correctly detected.
+> **Note:** In `TWAI_MODE_NO_ACK`, the ESP32 may receive its own transmitted messages (loopback). The detection filters these out by checking `sa != g_can->getAddress()` so that a disconnected CAN node does not falsely appear healthy.
 
 **Motor ECU Offline** is detected when:
 - No CAN messages are received from source address `0x20` for more than 1 second
@@ -268,6 +278,10 @@ ESP_CAN_ECU_joystick_collection/
 ├── build_flash.bat
 └── README.md
 ```
+
+## SEO Notes
+
+Relevant search terms naturally covered in this README include: forwarder CAN controller, ESP32 CAN bus joystick, forestry crane controller, hydraulic solenoid driver, J1939-style CAN firmware, and open-source crane joystick electronics.
 
 ## License
 
