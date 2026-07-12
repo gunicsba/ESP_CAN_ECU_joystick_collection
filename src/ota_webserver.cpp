@@ -2,13 +2,13 @@
 
 #if defined(ENABLE_OTA_WEBSERVER)
 
-#include <WiFi.h>
-#include <WebServer.h>
-#include <Update.h>
-#include <ESPmDNS.h>
 #include "ForwarderCAN.h"
 #include "ForwarderConfig.h"
 #include "web_state.h"
+#include <ESPmDNS.h>
+#include <Update.h>
+#include <WebServer.h>
+#include <WiFi.h>
 #if defined(ECU_TYPE_MOTOR_DRIVER)
 #include "ecu_motor_driver.h"
 #endif
@@ -18,21 +18,22 @@ static bool otaActive = false;
 
 // Module tracking from heartbeats
 struct ModuleInfo {
-    uint32_t lastSeen = 0;
-    uint8_t addr = 0;
-    uint8_t type = 0; // 0=unknown, 1=motor, 2=joystick
-    uint16_t uptime = 0;
-    uint8_t data5 = 0;
+  uint32_t lastSeen = 0;
+  uint8_t addr = 0;
+  uint8_t type = 0; // 0=unknown, 1=motor, 2=joystick
+  uint16_t uptime = 0;
+  uint8_t data5 = 0;
 };
 static ModuleInfo g_modules[256];
 static uint32_t lastModuleScan = 0;
 
-static int parseJsonInt(const String& json, const char* key, int searchStart, int searchEnd = -1);
+static int parseJsonInt(const String &json, const char *key, int searchStart,
+                        int searchEnd = -1);
 
 // ---------------------------------------------------------------------------
 // HTML Page
 // ---------------------------------------------------------------------------
-static const char* MAIN_HTML = R"rawliteral(
+static const char *MAIN_HTML = R"rawliteral(
 <!DOCTYPE html>
 <html>
 <head>
@@ -64,7 +65,11 @@ h1 { margin: 0; font-size: 1.2rem; color: #38bdf8; }
     padding: 12px 24px 0;
     background: #1e293b;
     border-bottom: 1px solid #334155;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
 }
+.tabs::-webkit-scrollbar { display: none; }
 .tab {
     padding: 10px 18px;
     background: transparent;
@@ -73,6 +78,8 @@ h1 { margin: 0; font-size: 1.2rem; color: #38bdf8; }
     cursor: pointer;
     border-bottom: 2px solid transparent;
     font-weight: 500;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 .tab.active { color: #38bdf8; border-bottom-color: #38bdf8; }
 .tab:hover { color: #e2e8f0; }
@@ -87,7 +94,16 @@ h1 { margin: 0; font-size: 1.2rem; color: #38bdf8; }
 }
 .card h3 { margin: 0 0 12px; font-size: 1rem; color: #94a3b8; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-@media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
+@media (max-width: 800px) {
+    .grid2 { grid-template-columns: 1fr; }
+    .tabs { padding: 8px 12px 0; gap: 2px; }
+    .tab { padding: 8px 12px; font-size: 0.8rem; }
+    .panel { padding: 12px; }
+    .card { padding: 12px; }
+    header { padding: 12px 16px; }
+    h1 { font-size: 1rem; }
+    .axis-row, .canout-row { overflow-x: auto; }
+}
 .bar-track {
     background: #334155;
     border-radius: 6px;
@@ -130,7 +146,7 @@ button.secondary { background: #475569; }
 button.secondary:hover { background: #64748b; }
 button.danger { background: #ef4444; }
 button.danger:hover { background: #dc2626; }
-input[type="number"], select {
+input[type="number"], select, input[type="text"] {
     background: #0f172a;
     border: 1px solid #475569;
     color: #e2e8f0;
@@ -145,7 +161,7 @@ input[type="range"] {
 }
 .axis-row {
     display: grid;
-    grid-template-columns: 30px 40px 70px 70px 50px 60px 60px 45px 40px 70px 70px;
+    grid-template-columns: 30px 40px 130px 80px 60px 60px 45px 40px 100px 70px;
     gap: 4px;
     align-items: center;
     padding: 6px 0;
@@ -164,7 +180,7 @@ input[type="range"] {
 }
 .canout-row.header { color: #94a3b8; font-weight: 500; border-bottom: 2px solid #475569; }
 @media (max-width: 1000px) {
-    .axis-row { grid-template-columns: 25px 35px 60px 60px 45px 55px 55px 40px 35px 60px 65px; }
+    .axis-row { grid-template-columns: 25px 35px 110px 70px 55px 55px 40px 35px 90px 60px; }
 }
 .slider-group { display: flex; align-items: center; gap: 8px; }
 .slider-group input[type="range"] { flex: 1; }
@@ -200,6 +216,9 @@ input[type="range"] {
     <button class="tab active" onclick="switchTab('dash')">Dashboard</button>
     <button class="tab" onclick="switchTab('modules')">Modules</button>
     <button class="tab" onclick="switchTab('mapping')">Motor Mapping</button>
+    <button class="tab" onclick="switchTab('labels')">Labels</button>
+    <button class="tab" onclick="switchTab('btnout')">Button Outputs</button>
+    <button class="tab" onclick="switchTab('canbtns')">CAN Buttons</button>
     <button class="tab" onclick="switchTab('dbtune')">Deadband</button>
     <button class="tab" onclick="switchTab('canout')">CAN Output</button>
     <button class="tab" onclick="switchTab('mottest')">Motor Test</button>
@@ -218,6 +237,18 @@ input[type="range"] {
             <h3>Joystick 2 (0x22)</h3>
             <div id="joy2_pots"></div>
             <div class="info-row"><span>Buttons:</span><span id="joy2_btns">--</span></div>
+        </div>
+    </div>
+    <div class="grid2">
+        <div class="card">
+            <h3>Joystick 3 (0x23)</h3>
+            <div id="joy3_pots"></div>
+            <div class="info-row"><span>Buttons:</span><span id="joy3_btns">--</span></div>
+        </div>
+        <div class="card">
+            <h3>Joystick 4 (0x24)</h3>
+            <div id="joy4_pots"></div>
+            <div class="info-row"><span>Buttons:</span><span id="joy4_btns">--</span></div>
         </div>
     </div>
     <div class="card">
@@ -330,6 +361,43 @@ input[type="range"] {
     </div>
 </div>
 
+<div id="labels" class="panel">
+    <div class="card">
+        <h3>Joystick Labels</h3>
+        <p style="color:#94a3b8;font-size:0.85rem;margin:0 0 12px">Assign position labels and axis names to each joystick for readable dropdowns.</p>
+        <div id="joyLabelsList"></div>
+    </div>
+    <div class="card">
+        <h3>Output Labels</h3>
+        <p style="color:#94a3b8;font-size:0.85rem;margin:0 0 12px">Assign names to each PWM output channel.</p>
+        <div id="outLabelsList"></div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;">
+        <button onclick="saveLabels()">Save Labels</button>
+        <button class="secondary" onclick="fetchLabels()">Refresh</button>
+    </div>
+</div>
+
+<div id="btnout" class="panel">
+    <div class="card">
+        <h3>Button-to-Output Rules</h3>
+        <p style="color:#94a3b8;font-size:0.85rem;margin:0 0 12px">Map joystick buttons to PWM outputs. Add rules as needed (up to 16). Each output supports 2 buttons (e.g. one for max, one for min).</p>
+        <div id="btnOutList"></div>
+    </div>
+</div>
+
+<div id="canbtns" class="panel">
+    <div class="card">
+        <h3>Custom CAN Buttons</h3>
+        <p style="color:#94a3b8;font-size:0.85rem;margin:0 0 12px">Define virtual buttons triggered by specific CAN messages. Each button matches a CAN ID + byte + bit. These can be assigned to outputs in Button Outputs.</p>
+        <div id="customBtnList"></div>
+        <div style="margin-top:12px;display:flex;gap:8px;">
+            <button onclick="saveCustomBtns()">Save</button>
+            <button class="secondary" onclick="fetchCustomBtns()">Refresh</button>
+        </div>
+    </div>
+</div>
+
 <div id="dbtune" class="panel">
     <div class="card">
         <h3>Deadband Tuning</h3>
@@ -369,14 +437,18 @@ function barHtml(id, label, value, max, color) {
 }
 
 function renderJoysticks() {
-    const joy1 = gState.joy && gState.joy[0x21] ? gState.joy[0x21] : { pots: [512,512,512], btns: 0, age: 9999 };
-    const joy2 = gState.joy && gState.joy[0x22] ? gState.joy[0x22] : { pots: [512,512,512], btns: 0, age: 9999 };
-    let h1 = ''; for (let i = 0; i < 3; i++) h1 += barHtml(`j1p${i}`, `Pot ${i+1}`, joy1.pots[i], 1023, 'linear-gradient(90deg,#f59e0b,#fbbf24)');
-    document.getElementById('joy1_pots').innerHTML = h1;
-    document.getElementById('joy1_btns').textContent = (joy1.btns & 1 ? 'Btn1 ' : '') + (joy1.btns & 2 ? 'Btn2' : '') + (joy1.btns === 0 ? 'None' : '');
-    let h2 = ''; for (let i = 0; i < 3; i++) h2 += barHtml(`j2p${i}`, `Pot ${i+1}`, joy2.pots[i], 1023, 'linear-gradient(90deg,#f59e0b,#fbbf24)');
-    document.getElementById('joy2_pots').innerHTML = h2;
-    document.getElementById('joy2_btns').textContent = (joy2.btns & 1 ? 'Btn1 ' : '') + (joy2.btns & 2 ? 'Btn2' : '') + (joy2.btns === 0 ? 'None' : '');
+    const joyAddrs = [0x21, 0x22, 0x23, 0x24];
+    const joyNames = ['1', '2', '3', '4'];
+    for (let ji = 0; ji < 4; ji++) {
+        const addr = joyAddrs[ji];
+        const joy = gState.joy && gState.joy[addr] ? gState.joy[addr] : { pots: [512,512,512,512], btns: 0, age: 9999 };
+        let h = ''; for (let i = 0; i < 4; i++) h += barHtml(`j${ji}p${i}`, `Pot ${i+1}`, joy.pots[i] || 0, 1023, 'linear-gradient(90deg,#f59e0b,#fbbf24)');
+        document.getElementById('joy' + (ji+1) + '_pots').innerHTML = h;
+        const btnNames = ['Btn1', 'Btn2', 'Btn3', 'Btn4'];
+        let btnStr = '';
+        for (let b = 0; b < 4; b++) { if (joy.btns & (1 << b)) btnStr += (btnStr ? ' ' : '') + btnNames[b]; }
+        document.getElementById('joy' + (ji+1) + '_btns').textContent = btnStr || 'None';
+    }
 }
 
 function renderSol() {
@@ -419,7 +491,7 @@ function renderDeadbandTuning() {
             const src = parseInt(srcStr);
             const joy = gState.joy[srcStr];
             if (joy && joy.pots) {
-                for (let pi = 0; pi < joy.pots.length; pi++) {
+                for (let pi = 0; pi < 4; pi++) {
                     const key = src + '_' + pi;
                     if (!pots[key]) pots[key] = { src: src, pot: pi, dbMin: 307, dbMax: 717, axes: [] };
                 }
@@ -430,7 +502,16 @@ function renderDeadbandTuning() {
     let h = '';
     for (const key of keys) {
         const p = pots[key];
-        const srcLabel = '0x' + p.src.toString(16).toUpperCase();
+        const srcLabel = (() => {
+            for (const jl of gLabels.joysticks) {
+                if (jl.sourceAddress === p.src) {
+                    const pos = jl.position || ('Joy' + (gLabels.joysticks.indexOf(jl)+1));
+                    const ax = jl.axisLabels[p.pot] || ('Axis' + (p.pot+1));
+                    return pos + ' ' + ax;
+                }
+            }
+            return '0x' + p.src.toString(16).toUpperCase() + ' Pot' + (p.pot+1);
+        })();
         const joy = gState.joy && gState.joy[p.src];
         const online = joy && (joy.age < 3);
         const pv = joy ? (joy.pots[p.pot] || 0) : 0;
@@ -447,7 +528,7 @@ function renderDeadbandTuning() {
         const sa = p.src, pi = p.pot;
         h += '<div class="card' + staleCls + '" style="margin-bottom:10px">';
         h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
-        h += '<span style="font-weight:600;color:#38bdf8">' + srcLabel + ' Pot ' + (p.pot + 1) + '</span>';
+        h += '<span style="font-weight:600;color:#38bdf8">' + srcLabel + '</span>';
         h += '<span style="color:' + (online ? '#e2e8f0' : '#ef4444') + ';font-weight:600">' + (online ? pv : 'NO DATA') + '</span>';
         h += '<span style="color:' + dirClr + ';font-weight:600;font-size:0.8rem">' + dir + '</span>';
         h += '<span style="color:' + offClr + ';font-size:0.75rem">Off: ' + offPct + '%</span>';
@@ -579,48 +660,49 @@ function renderMapping() {
     let h = '<div class="axis-row header">';
     h += '<div title="Axis index (0-15)">#</div>';
     h += '<div title="Enable this axis">En</div>';
-    h += '<div title="Joystick source address">Src</div>';
-    h += '<div title="Potentiometer input (1-3)">Pot</div>';
-    h += '<div title="Output number (1-8) as labeled on dev board. Each output uses 2 PCA9685 channels">Out</div>';
-    h += '<div title="Minimum PWM output duty (0-255). Scaled to 0-4095 on the PCA9685 output">PWM Min</div>';
-    h += '<div title="Maximum PWM output duty (0-255). Scaled to 0-4095 on the PCA9685 output">PWM Max</div>';
+    h += '<div title="Joystick axis source (label-based)">Source</div>';
+    h += '<div title="Output channel">Output</div>';
+    h += '<div title="Minimum PWM output duty (0-255)">PWM Min</div>';
+    h += '<div title="Maximum PWM output duty (0-255)">PWM Max</div>';
     h += '<div title="Bidirectional: uses paired channels for fwd/rev">Bidir</div>';
-    h += '<div title="Invert: swaps forward/reverse channels so joystick direction is reversed">Inv</div>';
-    h += '<div title="Button gate: axis only active when BTN1 is pressed (BTN1) or released (!BTN1). None = always active">Gate</div>';
-    h += '<div title="Exponential curvature: Linear (1.0x) or curved (1.5x-3.0x) for smoother center control">Curve</div>';
+    h += '<div title="Invert: swaps forward/reverse channels">Inv</div>';
+    h += '<div title="Button gate: axis only active when button is pressed">Gate</div>';
+    h += '<div title="Exponential curvature">Curve</div>';
     h += '</div>';
     h += '<div style="padding:6px 8px;color:#94a3b8;font-size:0.72rem;grid-column:1/-1;line-height:1.5">';
-    h += '<b>Out:</b> Output 1-8 (labeled on board). Each uses 2 channels (fwd+rev). ';
-    h += '<b>PWM Min/Max:</b> Output duty range (0=off, 255=full). ';
-    h += '<b>Bidir:</b> Uses paired channels. ';
-    h += '<b>Gate:</b> When BTN1 toggles, gated axes zero their outputs (valve returns to center).';
+    h += '<b>Source:</b> Select joystick axis using labels (set in Labels tab). ';
+    h += '<b>Output:</b> PWM output channel (set labels in Labels tab). ';
+    h += '<b>Gate:</b> Activate axis only when button is pressed.';
     h += '</div>';
     for (let i = 0; i < 16; i++) {
         const a = axes[i] || { sourceAddress: 0, potIndex: 0, outputChannel: 0, deadbandMin: 307, deadbandMax: 717, pwmMin: 20, pwmMax: 100, flags: 0, buttonGate: 0, curveExp: 2 };
         const en = (a.flags & 1) ? 'checked' : '';
         const bidir = (a.flags & 2) ? 'checked' : '';
         const invert = (a.flags & 4) ? 'checked' : '';
-        const curve = a.curveExp || 2;  // Default to linear (2 = 1.0x)
-        // Convert channel to output number (0->1, 2->2, 4->3, ..., 14->8)
+        const curve = a.curveExp || 2;
         const outNum = Math.floor(a.outputChannel / 2) + 1;
-        // Build output dropdown options (1-8)
+        // Output dropdown with labels
         let outOpts = '';
         for (let o = 1; o <= 8; o++) {
-            outOpts += `<option value="${o}" ${outNum==o?'selected':''}>${o}</option>`;
+            const chIdx = (o - 1) * 2;
+            const ol = gLabels.outputs[chIdx];
+            const lbl = (ol && ol.label) ? ol.label : ('Out ' + o);
+            outOpts += '<option value="' + o + '" ' + (outNum==o?'selected':'') + '>' + lbl + '</option>';
         }
-        h += `<div class="axis-row">
-            <div>${i}</div>
-            <div><input type="checkbox" id="a${i}_en" ${en} onchange="checkChannelConflicts()"></div>
-            <div><select id="a${i}_src" style="min-width:65px"><option value="0">Off</option><option value="33" ${a.sourceAddress==33?'selected':''}>0x21</option><option value="34" ${a.sourceAddress==34?'selected':''}>0x22</option></select></div>
-            <div><select id="a${i}_pot" style="min-width:65px"><option value="0" ${a.potIndex==0?'selected':''}>Pot1</option><option value="1" ${a.potIndex==1?'selected':''}>Pot2</option><option value="2" ${a.potIndex==2?'selected':''}>Pot3</option></select></div>
-            <div><select id="a${i}_ch" onchange="checkChannelConflicts()" style="width:55px">${outOpts}</select></div>
-            <div><input type="number" id="a${i}_pwmin" value="${a.pwmMin}" min="0" max="255" style="width:60px"></div>
-            <div><input type="number" id="a${i}_pwmax" value="${a.pwmMax}" min="0" max="255" style="width:60px"></div>
-            <div><input type="checkbox" id="a${i}_bidir" ${bidir} onchange="checkChannelConflicts()"></div>
-            <div><input type="checkbox" id="a${i}_inv" ${invert}></div>
-            <div><select id="a${i}_bgate" style="min-width:60px"><option value="0" ${a.buttonGate==0?'selected':''}>None</option><option value="1" ${a.buttonGate==1?'selected':''}>BTN1</option><option value="2" ${a.buttonGate==2?'selected':''}>!BTN1</option></select></div>
-            <div><select id="a${i}_curve" style="min-width:60px"><option value="2" ${curve==2?'selected':''}>1.0x</option><option value="3" ${curve==3?'selected':''}>1.5x</option><option value="4" ${curve==4?'selected':''}>2.0x</option><option value="5" ${curve==5?'selected':''}>2.5x</option><option value="6" ${curve==6?'selected':''}>3.0x</option></select></div>
-        </div>`;
+        const axisDropdown = buildAxisDropdown(a.sourceAddress, a.potIndex);
+        const gateDropdown = buildGateDropdown(a.buttonGate);
+        h += '<div class="axis-row">';
+        h += '<div>' + i + '</div>';
+        h += '<div><input type="checkbox" id="a' + i + '_en" ' + en + ' onchange="checkChannelConflicts()"></div>';
+        h += '<div><select id="a' + i + '_src" style="min-width:120px">' + axisDropdown + '</select></div>';
+        h += '<div><select id="a' + i + '_ch" onchange="checkChannelConflicts()" style="width:80px">' + outOpts + '</select></div>';
+        h += '<div><input type="number" id="a' + i + '_pwmin" value="' + a.pwmMin + '" min="0" max="255" style="width:60px"></div>';
+        h += '<div><input type="number" id="a' + i + '_pwmax" value="' + a.pwmMax + '" min="0" max="255" style="width:60px"></div>';
+        h += '<div><input type="checkbox" id="a' + i + '_bidir" ' + bidir + ' onchange="checkChannelConflicts()"></div>';
+        h += '<div><input type="checkbox" id="a' + i + '_inv" ' + invert + '></div>';
+        h += '<div><select id="a' + i + '_bgate" style="min-width:100px">' + gateDropdown + '</select></div>';
+        h += '<div><select id="a' + i + '_curve" style="min-width:60px"><option value="2" ' + (curve==2?'selected':'') + '>1.0x</option><option value="3" ' + (curve==3?'selected':'') + '>1.5x</option><option value="4" ' + (curve==4?'selected':'') + '>2.0x</option><option value="5" ' + (curve==5?'selected':'') + '>2.5x</option><option value="6" ' + (curve==6?'selected':'') + '>3.0x</option></select></div>';
+        h += '</div>';
     }
     h += '<div id="channelWarnings" style="grid-column:1/-1;padding:8px;margin-top:8px;"></div>';
     document.getElementById('axisList').innerHTML = h;
@@ -778,13 +860,15 @@ async function saveMapping() {
     }
     for (let i = 0; i < 16; i++) {
         const flags = (document.getElementById('a' + i + '_en').checked ? 1 : 0) | (document.getElementById('a' + i + '_bidir').checked ? 2 : 0) | (document.getElementById('a' + i + '_inv').checked ? 4 : 0);
-        const src = parseInt(document.getElementById('a' + i + '_src').value);
-        const pot = parseInt(document.getElementById('a' + i + '_pot').value);
+        const srcVal = document.getElementById('a' + i + '_src').value.split('_');
+        const src = parseInt(srcVal[0]) || 0;
+        const pot = parseInt(srcVal[1]) || 0;
         const dbKey = src + '_' + pot;
         const db = dbMap[dbKey] || { min: 307, max: 717 };
         // Convert output number (1-8) to channel (0,2,4,6,8,10,12,14)
         const outNum = parseInt(document.getElementById('a' + i + '_ch').value);
         const channel = (outNum - 1) * 2;
+        const gateVal = parseInt(document.getElementById('a' + i + '_bgate').value) || 0;
         axes.push({
             axisIdx: i,
             sourceAddress: src,
@@ -795,7 +879,7 @@ async function saveMapping() {
             pwmMin: parseInt(document.getElementById('a' + i + '_pwmin').value),
             pwmMax: parseInt(document.getElementById('a' + i + '_pwmax').value),
             flags: flags,
-            buttonGate: parseInt(document.getElementById('a' + i + '_bgate').value) || 0,
+            buttonGate: gateVal,
             curveExp: parseInt(document.getElementById('a' + i + '_curve').value) || 2
         });
     }
@@ -964,10 +1048,321 @@ async function fetchTestState() {
 }
 
 setInterval(fetchState, 1000);
-fetchConfig().then(() => fetchState());
+fetchConfig().then(() => { fetchState(); fetchLabels(); });
 fetchCanOut();
 fetchTestState();
+fetchBtnRules();
+fetchCustomBtns();
 setInterval(fetchTestState, 2000);
+
+// ---------------------------------------------------------------------------
+// Labels management
+// ---------------------------------------------------------------------------
+let gLabels = { joysticks: [], outputs: [] };
+
+function buildAxisDropdown(selectedSA, selectedPot) {
+    // Build dropdown options from labels: "position axisLabel" -> value "SA_POT"
+    let opts = '<option value="0_0">-- Off --</option>';
+    const joyAddrs = [0x21, 0x22, 0x23, 0x24];
+    for (let ji = 0; ji < gLabels.joysticks.length; ji++) {
+        const jl = gLabels.joysticks[ji];
+        if (!jl.sourceAddress) continue;
+        const pos = jl.position || ('Joy' + (ji+1));
+        for (let a = 0; a < 4; a++) {
+            const axLbl = jl.axisLabels[a] || ('Axis' + (a+1));
+            const val = jl.sourceAddress + '_' + a;
+            const sel = (jl.sourceAddress == selectedSA && a == selectedPot) ? 'selected' : '';
+            opts += '<option value="' + val + '" ' + sel + '>' + pos + ' ' + axLbl + '</option>';
+        }
+    }
+    // Fallback: if no labels configured, show raw addresses
+    if (gLabels.joysticks.every(j => !j.sourceAddress)) {
+        opts = '<option value="0_0">-- Off --</option>';
+        for (const sa of [0x21, 0x22, 0x23, 0x24]) {
+            for (let p = 0; p < 4; p++) {
+                const val = sa + '_' + p;
+                const sel = (sa == selectedSA && p == selectedPot) ? 'selected' : '';
+                opts += '<option value="' + val + '" ' + sel + '>0x' + sa.toString(16).toUpperCase() + ' Pot' + (p+1) + '</option>';
+            }
+        }
+    }
+    return opts;
+}
+
+function buildGateDropdown(currentGate) {
+    // Gate encoding: 0=none, 1=Btn1 pressed, 2=Btn1 released, 3=Btn2 pressed, 4=Btn2 released, etc.
+    let opts = '<option value="0" ' + (currentGate==0?'selected':'') + '>None</option>';
+    const btnNames = ['Btn1', 'Btn2', 'Btn3', 'Btn4'];
+    for (let ji = 0; ji < gLabels.joysticks.length; ji++) {
+        const jl = gLabels.joysticks[ji];
+        if (!jl.sourceAddress) continue;
+        const pos = jl.position || ('Joy' + (ji+1));
+        for (let b = 0; b < 4; b++) {
+            const pressedGate = b * 2 + 1;
+            const releasedGate = b * 2 + 2;
+            const selP = (pressedGate == currentGate) ? 'selected' : '';
+            const selR = (releasedGate == currentGate) ? 'selected' : '';
+            opts += '<option value="' + pressedGate + '" ' + selP + '>' + pos + ' ' + btnNames[b] + '</option>';
+            opts += '<option value="' + releasedGate + '" ' + selR + '>' + pos + ' !' + btnNames[b] + '</option>';
+        }
+    }
+    // Fallback if no labels
+    if (gLabels.joysticks.every(j => !j.sourceAddress)) {
+        for (let b = 0; b < 4; b++) {
+            const pressedGate = b * 2 + 1;
+            const releasedGate = b * 2 + 2;
+            const selP = (pressedGate == currentGate) ? 'selected' : '';
+            const selR = (releasedGate == currentGate) ? 'selected' : '';
+            opts += '<option value="' + pressedGate + '" ' + selP + '>Btn' + (b+1) + '</option>';
+            opts += '<option value="' + releasedGate + '" ' + selR + '>!Btn' + (b+1) + '</option>';
+        }
+    }
+    return opts;
+}
+
+function renderLabels() {
+    const positions = ['left', 'right', 'center', 'rear'];
+    let h = '';
+    const joyAddrs = [0x21, 0x22, 0x23, 0x24];
+    for (let i = 0; i < 4; i++) {
+        const jl = gLabels.joysticks[i] || { sourceAddress: joyAddrs[i], position: '', axisLabels: ['','','',''] };
+        let posOpts = '';
+        for (const p of positions) posOpts += '<option value="' + p + '" ' + (jl.position==p?'selected':'') + '>' + p + '</option>';
+        h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;padding:8px;background:#0f172a;border-radius:6px">';
+        h += '<span style="min-width:60px;font-weight:600;color:#38bdf8">Joy ' + (i+1) + '</span>';
+        h += '<input type="number" id="jlSA' + i + '" value="' + (jl.sourceAddress || joyAddrs[i]) + '" min="32" max="239" style="width:70px" placeholder="SA">';
+        h += '<select id="jlPos' + i + '" style="width:80px">' + posOpts + '</select>';
+        for (let a = 0; a < 4; a++) {
+            h += '<input type="text" id="jlAx' + i + '_' + a + '" value="' + (jl.axisLabels[a] || '') + '" placeholder="Axis ' + (a+1) + '" style="width:70px">';
+        }
+        h += '</div>';
+    }
+    document.getElementById('joyLabelsList').innerHTML = h;
+
+    // Output labels
+    let oh = '';
+    for (let i = 0; i < 16; i++) {
+        const ol = gLabels.outputs[i] || { channel: i, label: '' };
+        oh += '<div style="display:inline-flex;gap:4px;align-items:center;margin:4px">';
+        oh += '<span style="min-width:40px;font-size:0.8rem;color:#94a3b8">Out ' + (i+1) + '</span>';
+        oh += '<input type="text" id="olLbl' + i + '" value="' + (ol.label || '') + '" placeholder="Name" style="width:80px">';
+        oh += '</div>';
+    }
+    document.getElementById('outLabelsList').innerHTML = oh;
+}
+
+async function fetchLabels() {
+    try {
+        const r = await fetch('/api/labels');
+        gLabels = await r.json();
+        renderLabels();
+        renderMapping();
+    } catch(e) {}
+}
+
+async function saveLabels() {
+    const joyLabels = [];
+    for (let i = 0; i < 4; i++) {
+        const axes = [];
+        for (let a = 0; a < 4; a++) {
+            axes.push(document.getElementById('jlAx' + i + '_' + a).value);
+        }
+        joyLabels.push({
+            idx: i,
+            sourceAddress: parseInt(document.getElementById('jlSA' + i).value) || 0,
+            position: document.getElementById('jlPos' + i).value,
+            axes: axes
+        });
+    }
+    const outLabels = [];
+    for (let i = 0; i < 16; i++) {
+        outLabels.push({
+            outIdx: i,
+            channel: i,
+            label: document.getElementById('olLbl' + i).value
+        });
+    }
+    try {
+        await fetch('/api/labels', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ joysticks: joyLabels, outputs: outLabels }) });
+        setStatus('Labels saved', 'success');
+        await fetchLabels();
+    } catch(e) { setStatus('Failed to save labels', 'error'); }
+}
+
+// ---------------------------------------------------------------------------
+// Button Output Rules
+// ---------------------------------------------------------------------------
+let gBtnRules = [];
+
+function buildBtnSourceDropdown(selectedSA, selectedBtn) {
+    let opts = '<option value="0_0">-- Off --</option>';
+    // Physical joystick buttons
+    const joyAddrs = [0x21, 0x22, 0x23, 0x24];
+    for (let ji = 0; ji < gLabels.joysticks.length; ji++) {
+        const jl = gLabels.joysticks[ji];
+        const sa = jl.sourceAddress || joyAddrs[ji];
+        const pos = jl.position || ('Joy' + (ji+1));
+        for (let b = 0; b < 4; b++) {
+            const val = sa + '_' + b;
+            const sel = (sa == selectedSA && b == selectedBtn) ? 'selected' : '';
+            opts += '<option value="' + val + '" ' + sel + '>' + pos + ' Btn' + (b+1) + '</option>';
+        }
+    }
+    // Custom CAN buttons
+    for (let ci = 0; ci < gCustomBtns.length; ci++) {
+        const cb = gCustomBtns[ci];
+        if (!cb.enabled) continue;
+        const val = (0xF0 + ci) + '_0';
+        const sel = ((0xF0 + ci) == selectedSA && 0 == selectedBtn) ? 'selected' : '';
+        opts += '<option value="' + val + '" ' + sel + '>CAN: ' + (cb.name || 'Btn' + (ci+1)) + '</option>';
+    }
+    return opts;
+}
+
+function renderBtnOutRules() {
+    // Filter to only enabled rules for display
+    let activeRules = [];
+    for (let i = 0; i < gBtnRules.length; i++) {
+        if (gBtnRules[i] && gBtnRules[i].enabled) activeRules.push({ ...gBtnRules[i], _idx: i });
+    }
+    let h = '';
+    for (let ai = 0; ai < activeRules.length; ai++) {
+        const r = activeRules[ai];
+        const i = r._idx;
+        // Output dropdown with labels
+        let outOpts = '';
+        for (let o = 0; o < 16; o++) {
+            const ol = gLabels.outputs[o];
+            const lbl = (ol && ol.label) ? ol.label : ('Out ' + (o+1));
+            outOpts += '<option value="' + o + '" ' + (r.outputChannel==o?'selected':'') + '>' + lbl + '</option>';
+        }
+        const btnSrcOpts = buildBtnSourceDropdown(r.btnSourceSA, r.btnIndex);
+        h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:end;padding:10px;background:#0f172a;border-radius:8px;margin-bottom:8px;border:1px solid #334155">';
+        h += '<div style="grid-column:1/-1;display:flex;justify-content:space-between;align-items:center"><span style="color:#94a3b8;font-weight:500;font-size:0.85rem">Rule #' + (ai+1) + '</span>';
+        h += '<button class="danger" onclick="removeBtnRule(' + i + ')" style="padding:3px 10px;font-size:0.75rem">Remove</button></div>';
+        h += '<div><label style="display:block;color:#94a3b8;font-size:0.75rem;margin-bottom:2px">Output</label>';
+        h += '<select id="br' + i + '_out" style="width:100%">' + outOpts + '</select></div>';
+        h += '<div><label style="display:block;color:#94a3b8;font-size:0.75rem;margin-bottom:2px">Button Source</label>';
+        h += '<select id="br' + i + '_src" style="width:100%">' + btnSrcOpts + '</select></div>';
+        h += '<div><label style="display:block;color:#94a3b8;font-size:0.75rem;margin-bottom:2px">Mode</label>';
+        h += '<select id="br' + i + '_mode" style="width:100%"><option value="0" ' + (r.btnMode==0?'selected':'') + '>Max PWM</option><option value="1" ' + (r.btnMode==1?'selected':'') + '>Min PWM</option></select></div>';
+        h += '<div><label style="display:block;color:#94a3b8;font-size:0.75rem;margin-bottom:2px">PWM Target</label>';
+        h += '<input type="number" id="br' + i + '_pwm" value="' + r.pwmTarget + '" min="0" max="255" style="width:100%"></div>';
+        h += '<input type="hidden" id="br' + i + '_en" value="1">';
+        h += '</div>';
+    }
+    const canAdd = activeRules.length < 16;
+    h += '<div style="margin-top:8px;display:flex;gap:8px">';
+    if (canAdd) h += '<button onclick="addBtnRule()">+ Add Rule</button>';
+    h += '<button class="secondary" onclick="saveBtnRules()">Save</button>';
+    h += '<button class="secondary" onclick="fetchBtnRules()">Refresh</button>';
+    h += '</div>';
+    document.getElementById('btnOutList').innerHTML = h;
+}
+
+function addBtnRule() {
+    // Find first disabled slot
+    for (let i = 0; i < 16; i++) {
+        if (!gBtnRules[i] || !gBtnRules[i].enabled) {
+            gBtnRules[i] = { enabled: true, outputChannel: 0, btnSourceSA: 0, btnIndex: 0, btnMode: 0, pwmTarget: 255 };
+            renderBtnOutRules();
+            return;
+        }
+    }
+}
+
+function removeBtnRule(idx) {
+    gBtnRules[idx] = { enabled: false, outputChannel: 0, btnSourceSA: 0, btnIndex: 0, btnMode: 0, pwmTarget: 255 };
+    renderBtnOutRules();
+}
+
+async function fetchBtnRules() {
+    try {
+        const r = await fetch('/api/btnrules');
+        const d = await r.json();
+        gBtnRules = d.rules || [];
+        renderBtnOutRules();
+    } catch(e) {}
+}
+
+async function saveBtnRules() {
+    const rules = [];
+    for (let i = 0; i < 16; i++) {
+        const enEl = document.getElementById('br' + i + '_en');
+        const isEnabled = enEl ? (enEl.type === 'checkbox' ? enEl.checked : enEl.value === '1') : false;
+        const srcEl = document.getElementById('br' + i + '_src');
+        if (!srcEl) continue;
+        const srcVal = srcEl.value.split('_');
+        rules.push({
+            ruleIdx: i,
+            enabled: isEnabled,
+            outputChannel: parseInt(document.getElementById('br' + i + '_out').value) || 0,
+            btnSourceSA: parseInt(srcVal[0]) || 0,
+            btnIndex: parseInt(srcVal[1]) || 0,
+            btnMode: parseInt(document.getElementById('br' + i + '_mode').value) || 0,
+            pwmTarget: parseInt(document.getElementById('br' + i + '_pwm').value) || 255
+        });
+    }
+    try {
+        await fetch('/api/btnrules', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ rules: rules }) });
+        setStatus('Button rules saved', 'success');
+    } catch(e) { setStatus('Failed to save', 'error'); }
+}
+
+// ---------------------------------------------------------------------------
+// Custom CAN Buttons
+// ---------------------------------------------------------------------------
+let gCustomBtns = [];
+
+function renderCustomBtns() {
+    let h = '<div style="display:grid;grid-template-columns:40px 50px 100px 70px 70px 120px;gap:8px;align-items:center;font-size:0.8rem">';
+    h += '<div style="color:#94a3b8;font-weight:500">#</div>';
+    h += '<div style="color:#94a3b8;font-weight:500">En</div>';
+    h += '<div style="color:#94a3b8;font-weight:500">CAN ID (hex)</div>';
+    h += '<div style="color:#94a3b8;font-weight:500">Byte</div>';
+    h += '<div style="color:#94a3b8;font-weight:500">Bit</div>';
+    h += '<div style="color:#94a3b8;font-weight:500">Name</div>';
+    for (let i = 0; i < 8; i++) {
+        const b = gCustomBtns[i] || { enabled: false, canId: '0', byteIndex: 0, bitIndex: 0, name: '' };
+        const canIdHex = typeof b.canId === 'string' ? b.canId : Number(b.canId).toString(16).toUpperCase();
+        h += '<div>' + i + '</div>';
+        h += '<div><input type="checkbox" id="cb' + i + '_en" ' + (b.enabled?'checked':'') + '></div>';
+        h += '<div><input type="text" id="cb' + i + '_id" value="' + canIdHex + '" style="width:80px" placeholder="0x18FF0021"></div>';
+        h += '<div><input type="number" id="cb' + i + '_byte" value="' + b.byteIndex + '" min="0" max="7" style="width:50px"></div>';
+        h += '<div><input type="number" id="cb' + i + '_bit" value="' + b.bitIndex + '" min="0" max="7" style="width:50px"></div>';
+        h += '<div><input type="text" id="cb' + i + '_name" value="' + (b.name || '') + '" style="width:110px" placeholder="Button name"></div>';
+    }
+    h += '</div>';
+    document.getElementById('customBtnList').innerHTML = h;
+}
+
+async function fetchCustomBtns() {
+    try {
+        const r = await fetch('/api/custombtns');
+        const d = await r.json();
+        gCustomBtns = d.buttons || [];
+        renderCustomBtns();
+    } catch(e) {}
+}
+
+async function saveCustomBtns() {
+    const buttons = [];
+    for (let i = 0; i < 8; i++) {
+        buttons.push({
+            btnIdx: i,
+            enabled: document.getElementById('cb' + i + '_en').checked,
+            canId: document.getElementById('cb' + i + '_id').value,
+            byteIndex: parseInt(document.getElementById('cb' + i + '_byte').value) || 0,
+            bitIndex: parseInt(document.getElementById('cb' + i + '_bit').value) || 0,
+            name: document.getElementById('cb' + i + '_name').value
+        });
+    }
+    try {
+        await fetch('/api/custombtns', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ buttons: buttons }) });
+        setStatus('Custom buttons saved', 'success');
+        await fetchCustomBtns();
+    } catch(e) { setStatus('Failed to save', 'error'); }
+}
 </script>
 </body>
 </html>
@@ -976,237 +1371,258 @@ setInterval(fetchTestState, 2000);
 // ---------------------------------------------------------------------------
 // HTTP Handlers
 // ---------------------------------------------------------------------------
-static void handleRoot() {
-    server.send(200, "text/html", MAIN_HTML);
-}
+static void handleRoot() { server.send(200, "text/html", MAIN_HTML); }
 
 static void handleState() {
-    // Use chunked transfer to avoid massive heap allocation
-    // Build JSON in a fixed buffer
-    static char buf[1280];
-    int pos = 0;
-    pos += snprintf(buf + pos, sizeof(buf) - pos,
-        "{\"localAddr\":%d,\"online\":%s,\"uptime\":%lu,\"txCount\":%lu,\"rxCount\":%lu,\"errCount\":%lu,",
-        g_can ? g_can->getAddress() : 0,
-        g_can && g_can->isOnline() ? "true" : "false",
-        millis() / 1000,
-        g_can ? g_can->getTxCount() : 0,
-        g_can ? g_can->getRxCount() : 0,
-        g_can ? g_can->getErrorCount() : 0);
+  // Use chunked transfer to avoid massive heap allocation
+  // Build JSON in a fixed buffer
+  static char buf[1536];
+  int pos = 0;
+  pos +=
+      snprintf(buf + pos, sizeof(buf) - pos,
+               "{\"localAddr\":%d,\"online\":%s,\"uptime\":%lu,\"txCount\":%lu,"
+               "\"rxCount\":%lu,\"errCount\":%lu,",
+               g_can ? g_can->getAddress() : 0,
+               g_can && g_can->isOnline() ? "true" : "false", millis() / 1000,
+               g_can ? g_can->getTxCount() : 0, g_can ? g_can->getRxCount() : 0,
+               g_can ? g_can->getErrorCount() : 0);
 
-    // Joystick data (compact)
-    pos += snprintf(buf + pos, sizeof(buf) - pos, "\"joy\":{");
-    bool firstJoy = true;
-    for (int sa = 0; sa < 256; sa++) {
-        if (g_joyUpdateTime[sa] > 0 && millis() - g_joyUpdateTime[sa] < 2000) {
-            if (!firstJoy) pos += snprintf(buf + pos, sizeof(buf) - pos, ",");
-            pos += snprintf(buf + pos, sizeof(buf) - pos,
-                "\"%d\":{\"pots\":[%d,%d,%d],\"btns\":%d,\"age\":%lu}",
-                sa, g_joyPots[sa][0], g_joyPots[sa][1], g_joyPots[sa][2],
-                g_joyButtons[sa],
-                (millis() - g_joyUpdateTime[sa]) / 1000);
-            firstJoy = false;
-        }
+  // Joystick data (compact)
+  pos += snprintf(buf + pos, sizeof(buf) - pos, "\"joy\":{");
+  bool firstJoy = true;
+  for (int sa = 0; sa < 256; sa++) {
+    if (g_joyUpdateTime[sa] > 0 && millis() - g_joyUpdateTime[sa] < 2000) {
+      if (!firstJoy)
+        pos += snprintf(buf + pos, sizeof(buf) - pos, ",");
+      pos += snprintf(buf + pos, sizeof(buf) - pos,
+                      "\"%d\":{\"pots\":[%d,%d,%d,%d],\"btns\":%d,\"age\":%lu}",
+                      sa, g_joyPots[sa][0], g_joyPots[sa][1], g_joyPots[sa][2],
+                      g_joyPots[sa][3], g_joyButtons[sa],
+                      (millis() - g_joyUpdateTime[sa]) / 1000);
+      firstJoy = false;
     }
+  }
 #if defined(ECU_TYPE_JOYSTICK)
-    if (g_ecuJoystickId > 0 && g_can) {
-        if (!firstJoy) pos += snprintf(buf + pos, sizeof(buf) - pos, ",");
-        pos += snprintf(buf + pos, sizeof(buf) - pos,
-            "\"%d\":{\"pots\":[%d,%d,%d],\"btns\":%d,\"age\":0}",
-            g_can->getAddress(), g_localPot1, g_localPot2, g_localPot3,
-            (g_localBtn1 ? 1 : 0) | (g_localBtn2 ? 2 : 0));
-    }
+  if (g_ecuJoystickId > 0 && g_can) {
+    if (!firstJoy)
+      pos += snprintf(buf + pos, sizeof(buf) - pos, ",");
+    pos += snprintf(buf + pos, sizeof(buf) - pos,
+                    "\"%d\":{\"pots\":[%d,%d,%d,%d],\"btns\":%d,\"age\":0}",
+                    g_can->getAddress(), g_localPot1, g_localPot2, g_localPot3,
+                    g_localPot4,
+                    (g_localBtn1 ? 1 : 0) | (g_localBtn2 ? 2 : 0) |
+                        (g_localBtn3 ? 4 : 0) | (g_localBtn4 ? 8 : 0));
+  }
 #endif
-    pos += snprintf(buf + pos, sizeof(buf) - pos, "},\"sol\":[");
-    for (int i = 0; i < MAX_AXIS_COUNT; i++) {
-        if (i > 0) pos += snprintf(buf + pos, sizeof(buf) - pos, ",");
-        pos += snprintf(buf + pos, sizeof(buf) - pos, "%d", g_solenoidValues[i]);
+  pos += snprintf(buf + pos, sizeof(buf) - pos, "},\"sol\":[");
+  for (int i = 0; i < MAX_AXIS_COUNT; i++) {
+    if (i > 0)
+      pos += snprintf(buf + pos, sizeof(buf) - pos, ",");
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "%d", g_solenoidValues[i]);
+  }
+  pos += snprintf(buf + pos, sizeof(buf) - pos, "],\"modules\":{");
+  bool firstMod = true;
+  for (int i = 0; i < 256; i++) {
+    if (g_modules[i].lastSeen > 0 && millis() - g_modules[i].lastSeen < 5000) {
+      if (!firstMod)
+        pos += snprintf(buf + pos, sizeof(buf) - pos, ",");
+      pos +=
+          snprintf(buf + pos, sizeof(buf) - pos,
+                   "\"%d\":{\"addr\":%d,\"type\":%d,\"uptime\":%d,\"age\":%lu}",
+                   i, g_modules[i].addr, g_modules[i].type, g_modules[i].uptime,
+                   (millis() - g_modules[i].lastSeen) / 1000);
+      firstMod = false;
     }
-    pos += snprintf(buf + pos, sizeof(buf) - pos, "],\"modules\":{");
-    bool firstMod = true;
-    for (int i = 0; i < 256; i++) {
-        if (g_modules[i].lastSeen > 0 && millis() - g_modules[i].lastSeen < 5000) {
-            if (!firstMod) pos += snprintf(buf + pos, sizeof(buf) - pos, ",");
-            pos += snprintf(buf + pos, sizeof(buf) - pos,
-                "\"%d\":{\"addr\":%d,\"type\":%d,\"uptime\":%d,\"age\":%lu}",
-                i, g_modules[i].addr, g_modules[i].type, g_modules[i].uptime,
-                (millis() - g_modules[i].lastSeen) / 1000);
-            firstMod = false;
-        }
-    }
-    pos += snprintf(buf + pos, sizeof(buf) - pos, "}}");
-    server.send(200, "application/json", buf);
+  }
+  pos += snprintf(buf + pos, sizeof(buf) - pos, "}}");
+  server.send(200, "application/json", buf);
 }
 
 static void handleConfigGet() {
-    String json = "{";
-    json += "\"pcaCount\":" + String(g_motorCfg.pcaCount) + ",";
-    json += "\"axes\":[";
-    for (int i = 0; i < MAX_AXIS_COUNT; i++) {
-        const AxisConfig& a = g_motorCfg.axes[i];
-        if (i < 4 || a.flags) {
-            Serial.printf("[Config GET] axis%d src=0x%02X pot=%d ch=%d db=%d-%d pwm=%d-%d flags=%d\n",
-                i, a.sourceAddress, a.potIndex, a.outputChannel,
-                a.deadbandMin, a.deadbandMax, a.pwmMin, a.pwmMax, a.flags);
-        }
-        json += "{";
-        json += "\"sourceAddress\":" + String(a.sourceAddress) + ",";
-        json += "\"potIndex\":" + String(a.potIndex) + ",";
-        json += "\"outputChannel\":" + String(a.outputChannel) + ",";
-        json += "\"deadbandMin\":" + String(a.deadbandMin) + ",";
-        json += "\"deadbandMax\":" + String(a.deadbandMax) + ",";
-        json += "\"pwmMin\":" + String(a.pwmMin) + ",";
-        json += "\"pwmMax\":" + String(a.pwmMax) + ",";
-        json += "\"flags\":" + String(a.flags) + ",";
-        json += "\"buttonGate\":" + String(a.buttonGate) + ",";
-        json += "\"curveExp\":" + String(a.curveExp);
-        json += "},";
+  String json = "{";
+  json += "\"pcaCount\":" + String(g_motorCfg.pcaCount) + ",";
+  json += "\"axes\":[";
+  for (int i = 0; i < MAX_AXIS_COUNT; i++) {
+    const AxisConfig &a = g_motorCfg.axes[i];
+    if (i < 4 || a.flags) {
+      Serial.printf("[Config GET] axis%d src=0x%02X pot=%d ch=%d db=%d-%d "
+                    "pwm=%d-%d flags=%d\n",
+                    i, a.sourceAddress, a.potIndex, a.outputChannel,
+                    a.deadbandMin, a.deadbandMax, a.pwmMin, a.pwmMax, a.flags);
     }
-    if (json.endsWith(",")) json.remove(json.length() - 1);
-    json += "]}";
-    server.send(200, "application/json", json);
+    json += "{";
+    json += "\"sourceAddress\":" + String(a.sourceAddress) + ",";
+    json += "\"potIndex\":" + String(a.potIndex) + ",";
+    json += "\"outputChannel\":" + String(a.outputChannel) + ",";
+    json += "\"deadbandMin\":" + String(a.deadbandMin) + ",";
+    json += "\"deadbandMax\":" + String(a.deadbandMax) + ",";
+    json += "\"pwmMin\":" + String(a.pwmMin) + ",";
+    json += "\"pwmMax\":" + String(a.pwmMax) + ",";
+    json += "\"flags\":" + String(a.flags) + ",";
+    json += "\"buttonGate\":" + String(a.buttonGate) + ",";
+    json += "\"curveExp\":" + String(a.curveExp);
+    json += "},";
+  }
+  if (json.endsWith(","))
+    json.remove(json.length() - 1);
+  json += "]}";
+  server.send(200, "application/json", json);
 }
 
 static void handleConfigPost() {
-    if (server.hasArg("plain")) {
-        String body = server.arg("plain");
-        Serial.printf("[Config] POST body length=%d\n", body.length());
-        for (int i = 0; i < MAX_AXIS_COUNT; i++) {
-            String key = "\"axisIdx\":" + String(i);
-            int idx = body.indexOf(key);
-            if (idx >= 0) {
-                // Find the enclosing { } for this axis object
-                int objStart = body.lastIndexOf('{', idx);
-                int objEnd = body.indexOf('}', idx);
-                if (objStart < 0) objStart = 0;
-                if (objEnd < 0) objEnd = body.length();
+  if (server.hasArg("plain")) {
+    String body = server.arg("plain");
+    Serial.printf("[Config] POST body length=%d\n", body.length());
+    for (int i = 0; i < MAX_AXIS_COUNT; i++) {
+      String key = "\"axisIdx\":" + String(i);
+      int idx = body.indexOf(key);
+      if (idx >= 0) {
+        // Find the enclosing { } for this axis object
+        int objStart = body.lastIndexOf('{', idx);
+        int objEnd = body.indexOf('}', idx);
+        if (objStart < 0)
+          objStart = 0;
+        if (objEnd < 0)
+          objEnd = body.length();
 
-                AxisConfig a;
-                a.sourceAddress = parseJsonInt(body, "sourceAddress", objStart, objEnd);
-                a.potIndex = parseJsonInt(body, "potIndex", objStart, objEnd);
-                a.outputChannel = parseJsonInt(body, "outputChannel", objStart, objEnd);
-                a.deadbandMin = parseJsonInt(body, "deadbandMin", objStart, objEnd);
-                a.deadbandMax = parseJsonInt(body, "deadbandMax", objStart, objEnd);
-                a.pwmMin = parseJsonInt(body, "pwmMin", objStart, objEnd);
-                a.pwmMax = parseJsonInt(body, "pwmMax", objStart, objEnd);
-                a.flags = parseJsonInt(body, "flags", objStart, objEnd);
-                a.buttonGate = parseJsonInt(body, "buttonGate", objStart, objEnd);
-                a.curveExp = parseJsonInt(body, "curveExp", objStart, objEnd);
-                if (a.curveExp == 0) a.curveExp = 2;  // Default to linear
-                g_motorCfg.axes[i] = a;
-                Serial.printf("[Config] axis%d src=0x%02X pot=%d ch=%d db=%d-%d pwm=%d-%d flags=%d gate=%d curve=%d\n",
-                    i, a.sourceAddress, a.potIndex, a.outputChannel,
-                    a.deadbandMin, a.deadbandMax, a.pwmMin, a.pwmMax, a.flags, a.buttonGate, a.curveExp);
+        AxisConfig a;
+        a.sourceAddress = parseJsonInt(body, "sourceAddress", objStart, objEnd);
+        a.potIndex = parseJsonInt(body, "potIndex", objStart, objEnd);
+        a.outputChannel = parseJsonInt(body, "outputChannel", objStart, objEnd);
+        a.deadbandMin = parseJsonInt(body, "deadbandMin", objStart, objEnd);
+        a.deadbandMax = parseJsonInt(body, "deadbandMax", objStart, objEnd);
+        a.pwmMin = parseJsonInt(body, "pwmMin", objStart, objEnd);
+        a.pwmMax = parseJsonInt(body, "pwmMax", objStart, objEnd);
+        a.flags = parseJsonInt(body, "flags", objStart, objEnd);
+        a.buttonGate = parseJsonInt(body, "buttonGate", objStart, objEnd);
+        a.curveExp = parseJsonInt(body, "curveExp", objStart, objEnd);
+        if (a.curveExp == 0)
+          a.curveExp = 2; // Default to linear
+        g_motorCfg.axes[i] = a;
+        Serial.printf("[Config] axis%d src=0x%02X pot=%d ch=%d db=%d-%d "
+                      "pwm=%d-%d flags=%d gate=%d curve=%d\n",
+                      i, a.sourceAddress, a.potIndex, a.outputChannel,
+                      a.deadbandMin, a.deadbandMax, a.pwmMin, a.pwmMax, a.flags,
+                      a.buttonGate, a.curveExp);
 
-                // Save locally if motor driver
+        // Save locally if motor driver
 #if defined(ECU_TYPE_MOTOR_DRIVER)
-                cfgMgr.saveAxisConfig(i, a);
+        cfgMgr.saveAxisConfig(i, a);
 #endif
-                // Also broadcast to motor driver if this is a joystick
+        // Also broadcast to motor driver if this is a joystick
 #if defined(ECU_TYPE_JOYSTICK)
-                if (g_can) {
-                    uint8_t buf[8];
-                    a.pack(buf, i);
-                    g_can->send(PF_CONFIG_AXIS, 0x20, buf, 8, 6);
-                }
-#endif
-            }
+        if (g_can) {
+          uint8_t buf[8];
+          a.pack(buf, i);
+          g_can->send(PF_CONFIG_AXIS, 0x20, buf, 8, 6);
         }
+#endif
+      }
     }
-    server.send(200, "application/json", "{\"ok\":true}");
+  }
+  server.send(200, "application/json", "{\"ok\":true}");
 }
 
-static int parseJsonInt(const String& json, const char* key, int searchStart, int searchEnd) {
-    if (searchEnd < 0) searchEnd = json.length();
-    String search = String("\"") + key + "\":";
-    int pos = json.indexOf(search, searchStart);
-    if (pos < 0 || pos > searchEnd) return 0;
-    pos += search.length();
-    while (pos < searchEnd && (json[pos] == ' ' || json[pos] == '\t')) pos++;
-    int end = pos;
-    while (end < searchEnd && (json[end] == '-' || isdigit(json[end]))) end++;
-    if (end == pos) return 0;
-    return json.substring(pos, end).toInt();
+static int parseJsonInt(const String &json, const char *key, int searchStart,
+                        int searchEnd) {
+  if (searchEnd < 0)
+    searchEnd = json.length();
+  String search = String("\"") + key + "\":";
+  int pos = json.indexOf(search, searchStart);
+  if (pos < 0 || pos > searchEnd)
+    return 0;
+  pos += search.length();
+  while (pos < searchEnd && (json[pos] == ' ' || json[pos] == '\t'))
+    pos++;
+  int end = pos;
+  while (end < searchEnd && (json[end] == '-' || isdigit(json[end])))
+    end++;
+  if (end == pos)
+    return 0;
+  return json.substring(pos, end).toInt();
 }
 
 static void handleIdentify() {
-    if (server.hasArg("plain") && g_can) {
-        String body = server.arg("plain");
-        int target = parseJsonInt(body, "target", 0);
-        g_can->send(PF_IDENTIFY, target, nullptr, 0, 6);
-    }
-    server.send(200, "application/json", "{\"ok\":true}");
+  if (server.hasArg("plain") && g_can) {
+    String body = server.arg("plain");
+    int target = parseJsonInt(body, "target", 0);
+    g_can->send(PF_IDENTIFY, target, nullptr, 0, 6);
+  }
+  server.send(200, "application/json", "{\"ok\":true}");
 }
 
 static void handleLed() {
-    if (server.hasArg("plain") && g_can) {
-        String body = server.arg("plain");
-        int r = parseJsonInt(body, "r", 0);
-        int g = parseJsonInt(body, "g", 0);
-        int b = parseJsonInt(body, "b", 0);
-        int target = parseJsonInt(body, "target", 0);
-        uint8_t data[8] = { (uint8_t)r, (uint8_t)g, (uint8_t)b, 0, 0, 0, 0, 0 };
-        g_can->send(PF_LED_COLOR, target, data, 3, 6);
-        Serial.printf("[LED] Web UI set color R=%d G=%d B=%d target=0x%02X\n", r, g, b, target);
-    }
-    server.send(200, "application/json", "{\"ok\":true}");
+  if (server.hasArg("plain") && g_can) {
+    String body = server.arg("plain");
+    int r = parseJsonInt(body, "r", 0);
+    int g = parseJsonInt(body, "g", 0);
+    int b = parseJsonInt(body, "b", 0);
+    int target = parseJsonInt(body, "target", 0);
+    uint8_t data[8] = {(uint8_t)r, (uint8_t)g, (uint8_t)b, 0, 0, 0, 0, 0};
+    g_can->send(PF_LED_COLOR, target, data, 3, 6);
+    Serial.printf("[LED] Web UI set color R=%d G=%d B=%d target=0x%02X\n", r, g,
+                  b, target);
+  }
+  server.send(200, "application/json", "{\"ok\":true}");
 }
 
 static void handleAddress() {
-    if (server.hasArg("plain") && g_can) {
-        String body = server.arg("plain");
-        int target = parseJsonInt(body, "target", 0);
-        int addr = parseJsonInt(body, "address", 0);
-        uint8_t data[1] = { (uint8_t)addr };
-        g_can->send(PF_SET_ADDRESS, target, data, 1, 6);
-    }
-    server.send(200, "application/json", "{\"ok\":true}");
+  if (server.hasArg("plain") && g_can) {
+    String body = server.arg("plain");
+    int target = parseJsonInt(body, "target", 0);
+    int addr = parseJsonInt(body, "address", 0);
+    uint8_t data[1] = {(uint8_t)addr};
+    g_can->send(PF_SET_ADDRESS, target, data, 1, 6);
+  }
+  server.send(200, "application/json", "{\"ok\":true}");
 }
 
 static void handleCanOutputGet() {
-    String json = "{\"rules\":[";
-    for (int i = 0; i < MAX_CAN_OUTPUT_RULES; i++) {
-        const CanOutputRule& r = g_canOutputRules[i];
-        json += "{";
-        json += "\"enabled\":" + String(r.enabled ? "true" : "false") + ",";
-        json += "\"matchPF\":" + String(r.matchPF) + ",";
-        json += "\"matchSA\":" + String(r.matchSA) + ",";
-        json += "\"gpioPin\":" + String(r.gpioPin) + ",";
-        json += "\"mode\":" + String(r.mode) + ",";
-        json += "\"momentaryMs\":" + String(r.momentaryMs);
-        json += "},";
-    }
-    if (json.endsWith(",")) json.remove(json.length() - 1);
-    json += "]}";
-    server.send(200, "application/json", json);
+  String json = "{\"rules\":[";
+  for (int i = 0; i < MAX_CAN_OUTPUT_RULES; i++) {
+    const CanOutputRule &r = g_canOutputRules[i];
+    json += "{";
+    json += "\"enabled\":" + String(r.enabled ? "true" : "false") + ",";
+    json += "\"matchPF\":" + String(r.matchPF) + ",";
+    json += "\"matchSA\":" + String(r.matchSA) + ",";
+    json += "\"gpioPin\":" + String(r.gpioPin) + ",";
+    json += "\"mode\":" + String(r.mode) + ",";
+    json += "\"momentaryMs\":" + String(r.momentaryMs);
+    json += "},";
+  }
+  if (json.endsWith(","))
+    json.remove(json.length() - 1);
+  json += "]}";
+  server.send(200, "application/json", json);
 }
 
 static void handleCanOutputPost() {
-    if (server.hasArg("plain")) {
-        String body = server.arg("plain");
-        for (int i = 0; i < MAX_CAN_OUTPUT_RULES; i++) {
-            String key = "\"ruleIdx\":" + String(i);
-            int idx = body.indexOf(key);
-            if (idx >= 0) {
-                CanOutputRule r;
-                r.enabled = body.indexOf("\"enabled\":true", idx) > 0 && body.indexOf("\"enabled\":true", idx) < idx + 200;
-                r.matchPF = parseJsonInt(body, "matchPF", idx);
-                r.matchSA = parseJsonInt(body, "matchSA", idx);
-                r.gpioPin = parseJsonInt(body, "gpioPin", idx);
-                r.mode = parseJsonInt(body, "mode", idx);
-                r.momentaryMs = parseJsonInt(body, "momentaryMs", idx);
-                g_canOutputRules[i] = r;
+  if (server.hasArg("plain")) {
+    String body = server.arg("plain");
+    for (int i = 0; i < MAX_CAN_OUTPUT_RULES; i++) {
+      String key = "\"ruleIdx\":" + String(i);
+      int idx = body.indexOf(key);
+      if (idx >= 0) {
+        CanOutputRule r;
+        r.enabled = body.indexOf("\"enabled\":true", idx) > 0 &&
+                    body.indexOf("\"enabled\":true", idx) < idx + 200;
+        r.matchPF = parseJsonInt(body, "matchPF", idx);
+        r.matchSA = parseJsonInt(body, "matchSA", idx);
+        r.gpioPin = parseJsonInt(body, "gpioPin", idx);
+        r.mode = parseJsonInt(body, "mode", idx);
+        r.momentaryMs = parseJsonInt(body, "momentaryMs", idx);
+        g_canOutputRules[i] = r;
 #if defined(ECU_TYPE_MOTOR_DRIVER)
-                ForwarderConfig cfg("motorcfg");
-                cfg.begin();
-                cfg.saveCanOutputRule(i, r);
+        ForwarderConfig cfg("motorcfg");
+        cfg.begin();
+        cfg.saveCanOutputRule(i, r);
 #endif
-            }
-        }
-        // Re-init outputs with new config
-        can_output_setup(g_canOutputRules);
+      }
     }
-    server.send(200, "application/json", "{\"ok\":true}");
+    // Re-init outputs with new config
+    can_output_setup(g_canOutputRules);
+  }
+  server.send(200, "application/json", "{\"ok\":true}");
 }
 
 // ---------------------------------------------------------------------------
@@ -1214,190 +1630,441 @@ static void handleCanOutputPost() {
 // ---------------------------------------------------------------------------
 static void handleMotorTestGet() {
 #if defined(ECU_TYPE_MOTOR_DRIVER)
-    String json = "{";
-    json += "\"enabled\":" + String(g_testMode ? "true" : "false") + ",";
-    json += "\"values\":[";
-    for (int i = 0; i < 16; i++) {
-        json += String(g_testValues[i]);
-        if (i < 15) json += ",";
-    }
-    json += "],";
-    json += "\"timeout\":" + String((g_lastTestCmd > 0 && millis() - g_lastTestCmd < 10000) ? (10000 - (millis() - g_lastTestCmd)) : 0);
-    json += "}";
-    server.send(200, "application/json", json);
+  String json = "{";
+  json += "\"enabled\":" + String(g_testMode ? "true" : "false") + ",";
+  json += "\"values\":[";
+  for (int i = 0; i < 16; i++) {
+    json += String(g_testValues[i]);
+    if (i < 15)
+      json += ",";
+  }
+  json += "],";
+  json += "\"timeout\":" +
+          String((g_lastTestCmd > 0 && millis() - g_lastTestCmd < 10000)
+                     ? (10000 - (millis() - g_lastTestCmd))
+                     : 0);
+  json += "}";
+  server.send(200, "application/json", json);
 #else
-    server.send(200, "application/json", "{\"enabled\":false,\"values\":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]}");
+  server.send(
+      200, "application/json",
+      "{\"enabled\":false,\"values\":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]}");
 #endif
 }
 
 static void handleMotorTestPost() {
 #if defined(ECU_TYPE_MOTOR_DRIVER)
-    if (server.hasArg("plain")) {
-        String body = server.arg("plain");
-        // Parse enabled flag
-        if (body.indexOf("\"enabled\":true") >= 0) {
-            g_testMode = true;
-            g_lastTestCmd = millis();
-        } else if (body.indexOf("\"enabled\":false") >= 0) {
-            g_testMode = false;
-            // Zero all test values when disabling
-            for (int i = 0; i < 16; i++) g_testValues[i] = 0;
-        }
-        // Parse values array
-        int idx = body.indexOf("\"values\":");
-        if (idx >= 0) {
-            int arrStart = body.indexOf('[', idx);
-            int arrEnd = body.indexOf(']', arrStart);
-            if (arrStart >= 0 && arrEnd > arrStart) {
-                String arr = body.substring(arrStart + 1, arrEnd);
-                int pos = 0;
-                for (int i = 0; i < 16 && pos < arr.length(); i++) {
-                    int comma = arr.indexOf(',', pos);
-                    if (comma < 0) comma = arr.length();
-                    String val = arr.substring(pos, comma);
-                    val.trim();
-                    int v = val.toInt();
-                    if (v < 0) v = 0;
-                    if (v > 4095) v = 4095;
-                    g_testValues[i] = v;
-                    pos = comma + 1;
-                }
-            }
-        }
-        // Parse single output update (for +/- buttons)
-        if (body.indexOf("\"output\":") >= 0) {
-            int outIdx = parseJsonInt(body, "output", 0, body.length());
-            if (outIdx >= 0 && outIdx < 16) {
-                int newVal = parseJsonInt(body, "value", 0, body.length());
-                if (newVal < 0) newVal = 0;
-                if (newVal > 4095) newVal = 4095;
-                g_testValues[outIdx] = newVal;
-                g_lastTestCmd = millis();
-            }
-        }
+  if (server.hasArg("plain")) {
+    String body = server.arg("plain");
+    // Parse enabled flag
+    if (body.indexOf("\"enabled\":true") >= 0) {
+      g_testMode = true;
+      g_lastTestCmd = millis();
+    } else if (body.indexOf("\"enabled\":false") >= 0) {
+      g_testMode = false;
+      // Zero all test values when disabling
+      for (int i = 0; i < 16; i++)
+        g_testValues[i] = 0;
     }
-    server.send(200, "application/json", "{\"ok\":true}");
+    // Parse values array
+    int idx = body.indexOf("\"values\":");
+    if (idx >= 0) {
+      int arrStart = body.indexOf('[', idx);
+      int arrEnd = body.indexOf(']', arrStart);
+      if (arrStart >= 0 && arrEnd > arrStart) {
+        String arr = body.substring(arrStart + 1, arrEnd);
+        int pos = 0;
+        for (int i = 0; i < 16 && pos < arr.length(); i++) {
+          int comma = arr.indexOf(',', pos);
+          if (comma < 0)
+            comma = arr.length();
+          String val = arr.substring(pos, comma);
+          val.trim();
+          int v = val.toInt();
+          if (v < 0)
+            v = 0;
+          if (v > 4095)
+            v = 4095;
+          g_testValues[i] = v;
+          pos = comma + 1;
+        }
+      }
+    }
+    // Parse single output update (for +/- buttons)
+    if (body.indexOf("\"output\":") >= 0) {
+      int outIdx = parseJsonInt(body, "output", 0, body.length());
+      if (outIdx >= 0 && outIdx < 16) {
+        int newVal = parseJsonInt(body, "value", 0, body.length());
+        if (newVal < 0)
+          newVal = 0;
+        if (newVal > 4095)
+          newVal = 4095;
+        g_testValues[outIdx] = newVal;
+        g_lastTestCmd = millis();
+      }
+    }
+  }
+  server.send(200, "application/json", "{\"ok\":true}");
 #else
-    server.send(200, "application/json", "{\"ok\":false,\"error\":\"not motor driver\"}");
+  server.send(200, "application/json",
+              "{\"ok\":false,\"error\":\"not motor driver\"}");
 #endif
 }
 
 static void handleUpdate() {
-    HTTPUpload& upload = server.upload();
-    if (upload.status == UPLOAD_FILE_START) {
-        otaActive = true;
-        Serial.printf("[OTA] Start: %s\n", upload.filename.c_str());
-        if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
-            Update.printError(Serial);
-        }
-    } else if (upload.status == UPLOAD_FILE_WRITE) {
-        if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
-            Update.printError(Serial);
-        }
-    } else if (upload.status == UPLOAD_FILE_END) {
-        if (Update.end(true)) {
-            Serial.printf("[OTA] Success\n");
-            server.send(200, "text/plain", "OK");
-            delay(500);
-            ESP.restart();
-        } else {
-            Update.printError(Serial);
-            server.send(500, "text/plain", Update.errorString());
-        }
-        otaActive = false;
-    } else if (upload.status == UPLOAD_FILE_ABORTED) {
-        Update.end();
-        otaActive = false;
-        Serial.println("[OTA] Aborted");
+  HTTPUpload &upload = server.upload();
+  if (upload.status == UPLOAD_FILE_START) {
+    otaActive = true;
+    Serial.printf("[OTA] Start: %s\n", upload.filename.c_str());
+    if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+      Update.printError(Serial);
     }
+  } else if (upload.status == UPLOAD_FILE_WRITE) {
+    if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+      Update.printError(Serial);
+    }
+  } else if (upload.status == UPLOAD_FILE_END) {
+    if (Update.end(true)) {
+      Serial.printf("[OTA] Success\n");
+      server.send(200, "text/plain", "OK");
+      delay(500);
+      ESP.restart();
+    } else {
+      Update.printError(Serial);
+      server.send(500, "text/plain", Update.errorString());
+    }
+    otaActive = false;
+  } else if (upload.status == UPLOAD_FILE_ABORTED) {
+    Update.end();
+    otaActive = false;
+    Serial.println("[OTA] Aborted");
+  }
 }
 
-static void handleUpdatePost() {
-    server.send(200, "text/plain", "OK");
+static void handleUpdatePost() { server.send(200, "text/plain", "OK"); }
+
+// ---------------------------------------------------------------------------
+// Labels API
+// ---------------------------------------------------------------------------
+static void handleLabelsGet() {
+  String json = "{\"joysticks\":[";
+  for (int i = 0; i < MAX_JOYSTICK_LABELS; i++) {
+    if (i > 0)
+      json += ",";
+    json += "{\"sourceAddress\":" + String(g_joyLabels[i].sourceAddress);
+    json += ",\"position\":\"" + String(g_joyLabels[i].position) + "\"";
+    json += ",\"axes\":[";
+    for (int a = 0; a < 4; a++) {
+      if (a > 0)
+        json += ",";
+      json += "\"" + String(g_joyLabels[i].axisLabels[a]) + "\"";
+    }
+    json += "]}";
+  }
+  json += "],\"outputs\":[";
+  for (int i = 0; i < MAX_OUTPUT_LABELS; i++) {
+    if (i > 0)
+      json += ",";
+    json += "{\"channel\":" + String(g_outLabels[i].channel);
+    json += ",\"label\":\"" + String(g_outLabels[i].label) + "\"}";
+  }
+  json += "]}";
+  server.send(200, "application/json", json);
+}
+
+static void handleLabelsPost() {
+  if (!server.hasArg("plain")) {
+    server.send(400);
+    return;
+  }
+  String body = server.arg("plain");
+  // Parse joystick labels
+  for (int i = 0; i < MAX_JOYSTICK_LABELS; i++) {
+    String searchKey = "\"idx\":" + String(i);
+    int idx = body.indexOf(searchKey);
+    if (idx < 0)
+      continue;
+    int objStart = body.lastIndexOf('{', idx);
+    int objEnd = body.indexOf('}', idx);
+    if (objStart < 0)
+      objStart = 0;
+    if (objEnd < 0)
+      objEnd = body.length();
+    // Find nested axis object end
+    int braceCount = 0;
+    for (int c = objStart; c < body.length(); c++) {
+      if (body[c] == '{')
+        braceCount++;
+      if (body[c] == '}') {
+        braceCount--;
+        if (braceCount == 0) {
+          objEnd = c;
+          break;
+        }
+      }
+    }
+    String sub = body.substring(objStart, objEnd + 1);
+    g_joyLabels[i].sourceAddress = parseJsonInt(sub, "sourceAddress", 0);
+    // Parse position string
+    int posStart = sub.indexOf("\"position\":\"");
+    if (posStart >= 0) {
+      posStart += 12;
+      int posEnd = sub.indexOf("\"", posStart);
+      String pos = sub.substring(posStart, posEnd);
+      strncpy(g_joyLabels[i].position, pos.c_str(),
+              sizeof(g_joyLabels[i].position) - 1);
+      g_joyLabels[i].position[sizeof(g_joyLabels[i].position) - 1] = '\0';
+    }
+    // Parse axis labels array
+    int axesStart = sub.indexOf("\"axes\":[");
+    if (axesStart >= 0) {
+      int arrStart = sub.indexOf('[', axesStart);
+      int arrEnd = sub.indexOf(']', arrStart);
+      String arr = sub.substring(arrStart + 1, arrEnd);
+      for (int a = 0; a < 4; a++) {
+        int qs = arr.indexOf("\"");
+        if (qs < 0)
+          break;
+        int qe = arr.indexOf("\"", qs + 1);
+        if (qe < 0)
+          break;
+        String lbl = arr.substring(qs + 1, qe);
+        strncpy(g_joyLabels[i].axisLabels[a], lbl.c_str(),
+                sizeof(g_joyLabels[i].axisLabels[a]) - 1);
+        g_joyLabels[i].axisLabels[a][sizeof(g_joyLabels[i].axisLabels[a]) - 1] =
+            '\0';
+        arr = arr.substring(qe + 1);
+      }
+    }
+    cfgMgr.saveJoystickLabel(i, g_joyLabels[i]);
+  }
+  // Parse output labels
+  for (int i = 0; i < MAX_OUTPUT_LABELS; i++) {
+    String searchKey = "\"outIdx\":" + String(i);
+    int idx = body.indexOf(searchKey);
+    if (idx < 0)
+      continue;
+    int objStart = body.lastIndexOf('{', idx);
+    int objEnd = body.indexOf('}', idx);
+    if (objStart < 0)
+      objStart = 0;
+    String sub = body.substring(objStart, objEnd + 1);
+    g_outLabels[i].channel = parseJsonInt(sub, "channel", 0);
+    int lblStart = sub.indexOf("\"label\":\"");
+    if (lblStart >= 0) {
+      lblStart += 9;
+      int lblEnd = sub.indexOf("\"", lblStart);
+      String lbl = sub.substring(lblStart, lblEnd);
+      strncpy(g_outLabels[i].label, lbl.c_str(),
+              sizeof(g_outLabels[i].label) - 1);
+      g_outLabels[i].label[sizeof(g_outLabels[i].label) - 1] = '\0';
+    }
+    cfgMgr.saveOutputLabel(i, g_outLabels[i]);
+  }
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
+// ---------------------------------------------------------------------------
+// Button Output Rules API
+// ---------------------------------------------------------------------------
+static void handleBtnRulesGet() {
+  String json = "{\"rules\":[";
+  for (int i = 0; i < MAX_BUTTON_OUTPUT_RULES; i++) {
+    if (i > 0)
+      json += ",";
+    const ButtonOutputRule &r = g_btnOutputRules[i];
+    json += "{\"enabled\":" + String(r.enabled ? "true" : "false");
+    json += ",\"outputChannel\":" + String(r.outputChannel);
+    json += ",\"btnSourceSA\":" + String(r.btnSourceSA);
+    json += ",\"btnIndex\":" + String(r.btnIndex);
+    json += ",\"btnMode\":" + String(r.btnMode);
+    json += ",\"pwmTarget\":" + String(r.pwmTarget);
+    json += "}";
+  }
+  json += "]}";
+  server.send(200, "application/json", json);
+}
+
+static void handleBtnRulesPost() {
+  if (!server.hasArg("plain")) {
+    server.send(400);
+    return;
+  }
+  String body = server.arg("plain");
+  for (int i = 0; i < MAX_BUTTON_OUTPUT_RULES; i++) {
+    String key = "\"ruleIdx\":" + String(i);
+    int idx = body.indexOf(key);
+    if (idx < 0)
+      continue;
+    int objStart = body.lastIndexOf('{', idx);
+    int objEnd = body.indexOf('}', idx);
+    if (objStart < 0)
+      objStart = 0;
+    String sub = body.substring(objStart, objEnd + 1);
+    ButtonOutputRule r;
+    r.enabled = sub.indexOf("\"enabled\":true") > 0;
+    r.outputChannel = parseJsonInt(sub, "outputChannel", 0);
+    r.btnSourceSA = parseJsonInt(sub, "btnSourceSA", 0);
+    r.btnIndex = parseJsonInt(sub, "btnIndex", 0);
+    r.btnMode = parseJsonInt(sub, "btnMode", 0);
+    r.pwmTarget = parseJsonInt(sub, "pwmTarget", 255);
+    g_btnOutputRules[i] = r;
+    cfgMgr.saveButtonOutputRule(i, r);
+  }
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
+// ---------------------------------------------------------------------------
+// Custom CAN Buttons API
+// ---------------------------------------------------------------------------
+static void handleCustomBtnsGet() {
+  String json = "{\"buttons\":[";
+  for (int i = 0; i < MAX_CUSTOM_CAN_BUTTONS; i++) {
+    if (i > 0)
+      json += ",";
+    const CustomCanButton &b = g_customCanButtons[i];
+    json += "{\"enabled\":" + String(b.enabled ? "true" : "false");
+    json += ",\"canId\":\"" + String(b.canId, HEX) + "\"";
+    json += ",\"byteIndex\":" + String(b.byteIndex);
+    json += ",\"bitIndex\":" + String(b.bitIndex);
+    json += ",\"name\":\"" + String(b.name) + "\"";
+    json += "}";
+  }
+  json += "]}";
+  server.send(200, "application/json", json);
+}
+
+static void handleCustomBtnsPost() {
+  if (!server.hasArg("plain")) {
+    server.send(400);
+    return;
+  }
+  String body = server.arg("plain");
+  for (int i = 0; i < MAX_CUSTOM_CAN_BUTTONS; i++) {
+    String key = "\"btnIdx\":" + String(i);
+    int idx = body.indexOf(key);
+    if (idx < 0)
+      continue;
+    int objStart = body.lastIndexOf('{', idx);
+    int objEnd = body.indexOf('}', idx);
+    if (objStart < 0)
+      objStart = 0;
+    String sub = body.substring(objStart, objEnd + 1);
+    CustomCanButton b;
+    b.enabled = sub.indexOf("\"enabled\":true") > 0;
+    b.byteIndex = parseJsonInt(sub, "byteIndex", 0);
+    b.bitIndex = parseJsonInt(sub, "bitIndex", 0);
+    // Parse canId as hex string
+    int cidStart = sub.indexOf("\"canId\":\"");
+    if (cidStart >= 0) {
+      cidStart += 9;
+      int cidEnd = sub.indexOf("\"", cidStart);
+      String cidStr = sub.substring(cidStart, cidEnd);
+      b.canId = (uint32_t)strtol(cidStr.c_str(), NULL, 16);
+    }
+    // Parse name
+    int nameStart = sub.indexOf("\"name\":\"");
+    if (nameStart >= 0) {
+      nameStart += 8;
+      int nameEnd = sub.indexOf("\"", nameStart);
+      String name = sub.substring(nameStart, nameEnd);
+      strncpy(b.name, name.c_str(), sizeof(b.name) - 1);
+      b.name[sizeof(b.name) - 1] = '\0';
+    }
+    g_customCanButtons[i] = b;
+    cfgMgr.saveCustomCanButton(i, b);
+  }
+  server.send(200, "application/json", "{\"ok\":true}");
 }
 
 // ---------------------------------------------------------------------------
 // Heartbeat scanner
 // ---------------------------------------------------------------------------
 static void scanHeartbeats() {
-    if (!g_can) return;
-    CANMessage msg;
-    while (g_can->receive(msg, 0)) {
-        uint8_t pf = J1939_GET_PF(msg.id);
-        uint8_t sa = J1939_GET_SA(msg.id);
-        if (pf == PF_HEARTBEAT && sa < 256) {
-            g_modules[sa].lastSeen = millis();
-            g_modules[sa].addr = sa;
-            g_modules[sa].uptime = msg.data[0] | ((uint16_t)msg.data[1] << 8);
-            g_modules[sa].data5 = msg.data[5];
-            // Heuristic type detection
-            if (msg.data[5] == 16 || msg.data[5] == 8) {
-                g_modules[sa].type = 1; // Motor driver
-            } else if (msg.data[3] == 1 || msg.data[3] == 2) {
-                g_modules[sa].type = 2; // Joystick
-            }
-        }
+  if (!g_can)
+    return;
+  CANMessage msg;
+  while (g_can->receive(msg, 0)) {
+    uint8_t pf = J1939_GET_PF(msg.id);
+    uint8_t sa = J1939_GET_SA(msg.id);
+    if (pf == PF_HEARTBEAT && sa < 256) {
+      g_modules[sa].lastSeen = millis();
+      g_modules[sa].addr = sa;
+      g_modules[sa].uptime = msg.data[0] | ((uint16_t)msg.data[1] << 8);
+      g_modules[sa].data5 = msg.data[5];
+      // Heuristic type detection
+      if (msg.data[5] == 16 || msg.data[5] == 8) {
+        g_modules[sa].type = 1; // Motor driver
+      } else if (msg.data[3] == 1 || msg.data[3] == 2) {
+        g_modules[sa].type = 2; // Joystick
+      }
     }
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
-void ota_trackModule(uint8_t sa, const CANMessage& msg) {
-    g_modules[sa].lastSeen = millis();
-    g_modules[sa].addr = sa;
-    g_modules[sa].uptime = msg.data[0] | ((uint16_t)msg.data[1] << 8);
-    g_modules[sa].data5 = msg.data[5];
-    if (msg.data[5] == 16 || msg.data[5] == 8) {
-        g_modules[sa].type = 1; // Motor driver
-    } else if (msg.data[3] == 1 || msg.data[3] == 2) {
-        g_modules[sa].type = 2; // Joystick
-    }
+void ota_trackModule(uint8_t sa, const CANMessage &msg) {
+  g_modules[sa].lastSeen = millis();
+  g_modules[sa].addr = sa;
+  g_modules[sa].uptime = msg.data[0] | ((uint16_t)msg.data[1] << 8);
+  g_modules[sa].data5 = msg.data[5];
+  if (msg.data[5] == 16 || msg.data[5] == 8) {
+    g_modules[sa].type = 1; // Motor driver
+  } else if (msg.data[3] == 1 || msg.data[3] == 2) {
+    g_modules[sa].type = 2; // Joystick
+  }
 }
 
-void ota_setup(const char* hostname) {
-    WiFi.mode(WIFI_AP);
-    String ssid = String(hostname);
-    WiFi.softAP(ssid.c_str(), "12345678");
+void ota_setup(const char *hostname) {
+  WiFi.mode(WIFI_AP);
+  String ssid = String(hostname);
+  WiFi.softAP(ssid.c_str(), "12345678");
 
-    if (!MDNS.begin(hostname)) {
-        Serial.println("[OTA] mDNS failed");
-    } else {
-        MDNS.addService("http", "tcp", 80);
-    }
+  if (!MDNS.begin(hostname)) {
+    Serial.println("[OTA] mDNS failed");
+  } else {
+    MDNS.addService("http", "tcp", 80);
+  }
 
-    IPAddress ip = WiFi.softAPIP();
-    Serial.printf("[OTA] AP '%s' started, IP: %s\n", ssid.c_str(), ip.toString().c_str());
+  IPAddress ip = WiFi.softAPIP();
+  Serial.printf("[OTA] AP '%s' started, IP: %s\n", ssid.c_str(),
+                ip.toString().c_str());
 
-    server.on("/", HTTP_GET, handleRoot);
-    server.on("/api/state", HTTP_GET, handleState);
-    server.on("/api/config", HTTP_GET, handleConfigGet);
-    server.on("/api/config", HTTP_POST, handleConfigPost);
-    server.on("/api/identify", HTTP_POST, handleIdentify);
-    server.on("/api/led", HTTP_POST, handleLed);
-    server.on("/api/address", HTTP_POST, handleAddress);
-    server.on("/api/canoutput", HTTP_GET, handleCanOutputGet);
-    server.on("/api/canoutput", HTTP_POST, handleCanOutputPost);
-    server.on("/api/motortest", HTTP_GET, handleMotorTestGet);
-    server.on("/api/motortest", HTTP_POST, handleMotorTestPost);
-    server.on("/update", HTTP_POST, handleUpdatePost, handleUpdate);
-    server.begin();
-    Serial.println("[OTA] Web server started on port 80");
+  server.on("/", HTTP_GET, handleRoot);
+  server.on("/api/state", HTTP_GET, handleState);
+  server.on("/api/config", HTTP_GET, handleConfigGet);
+  server.on("/api/config", HTTP_POST, handleConfigPost);
+  server.on("/api/identify", HTTP_POST, handleIdentify);
+  server.on("/api/led", HTTP_POST, handleLed);
+  server.on("/api/address", HTTP_POST, handleAddress);
+  server.on("/api/canoutput", HTTP_GET, handleCanOutputGet);
+  server.on("/api/canoutput", HTTP_POST, handleCanOutputPost);
+  server.on("/api/motortest", HTTP_GET, handleMotorTestGet);
+  server.on("/api/motortest", HTTP_POST, handleMotorTestPost);
+  server.on("/api/labels", HTTP_GET, handleLabelsGet);
+  server.on("/api/labels", HTTP_POST, handleLabelsPost);
+  server.on("/api/btnrules", HTTP_GET, handleBtnRulesGet);
+  server.on("/api/btnrules", HTTP_POST, handleBtnRulesPost);
+  server.on("/api/custombtns", HTTP_GET, handleCustomBtnsGet);
+  server.on("/api/custombtns", HTTP_POST, handleCustomBtnsPost);
+  server.on("/update", HTTP_POST, handleUpdatePost, handleUpdate);
+  server.begin();
+  Serial.println("[OTA] Web server started on port 80");
 }
 
 void ota_loop() {
-    server.handleClient();
-    // scanHeartbeats removed - processCAN() handles all incoming messages
+  server.handleClient();
+  // scanHeartbeats removed - processCAN() handles all incoming messages
 }
 
-bool ota_is_active() {
-    return otaActive;
-}
+bool ota_is_active() { return otaActive; }
 
 #else // not ENABLE_OTA_WEBSERVER
 
-void ota_setup(const char* hostname) { (void)hostname; }
+void ota_setup(const char *hostname) { (void)hostname; }
 void ota_loop() {}
 bool ota_is_active() { return false; }
 

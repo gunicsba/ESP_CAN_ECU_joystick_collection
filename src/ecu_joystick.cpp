@@ -2,11 +2,11 @@
 
 #if defined(ECU_TYPE_JOYSTICK)
 
-#include <NeoPixelBus.h>
 #include "ForwarderCAN.h"
 #include "ForwarderConfig.h"
 #include "ota_webserver.h"
 #include "web_state.h"
+#include <NeoPixelBus.h>
 
 #ifndef CAN_TX_PIN
 #define CAN_TX_PIN 5
@@ -29,11 +29,20 @@
 #ifndef POT3_PIN
 #define POT3_PIN 34
 #endif
+#ifndef POT4_PIN
+#define POT4_PIN 35
+#endif
 #ifndef BTN1_PIN
 #define BTN1_PIN 16
 #endif
 #ifndef BTN2_PIN
 #define BTN2_PIN 17
+#endif
+#ifndef BTN3_PIN
+#define BTN3_PIN 18
+#endif
+#ifndef BTN4_PIN
+#define BTN4_PIN 8
 #endif
 #ifndef WS2812_PIN
 #define WS2812_PIN 48
@@ -43,14 +52,17 @@
 #endif
 
 static NeoPixelBus<NeoGrbFeature, Neo800KbpsMethod> strip(1, WS2812_PIN);
-ForwarderCAN* g_can = nullptr;
+ForwarderCAN *g_can = nullptr;
 ForwarderConfig cfgMgr("joycfg");
 
-uint16_t g_localPot1 = 512, g_localPot2 = 512, g_localPot3 = 512;
-bool g_localBtn1 = false, g_localBtn2 = false;
+uint16_t g_localPot1 = 512, g_localPot2 = 512, g_localPot3 = 512,
+         g_localPot4 = 512;
+bool g_localBtn1 = false, g_localBtn2 = false, g_localBtn3 = false,
+     g_localBtn4 = false;
 uint8_t g_ecuJoystickId = ECU_JOYSTICK_ID;
 
-static uint16_t prevPot1 = 0xFFFF, prevPot2 = 0xFFFF, prevPot3 = 0xFFFF;
+static uint16_t prevPot1 = 0xFFFF, prevPot2 = 0xFFFF, prevPot3 = 0xFFFF,
+                prevPot4 = 0xFFFF;
 static uint8_t prevButtons = 0xFF;
 static uint32_t lastSend = 0;
 static uint32_t lastHeartbeat = 0;
@@ -61,253 +73,305 @@ static uint32_t identifyTimer = 0;
 static bool identifyActive = false;
 
 // Motor ECU status tracking
-static uint32_t lastMotorEcuMsg = 0;  // Timestamp of last message from motor ECU (0x20)
-static constexpr uint32_t MOTOR_ECU_TIMEOUT_MS = 1000;  // 1 second = motor ECU offline
-static uint32_t lastAnyMsgReceived = 0;  // Timestamp of last received CAN message (any source)
-static constexpr uint32_t CAN_BUS_TIMEOUT_MS = 2000;  // 2 seconds with no messages = bus broken
+static uint32_t lastMotorEcuMsg =
+    0; // Timestamp of last message from motor ECU (0x20)
+static constexpr uint32_t MOTOR_ECU_TIMEOUT_MS =
+    1000; // 1 second = motor ECU offline
+static uint32_t lastAnyMsgReceived =
+    0; // Timestamp of last received CAN message (any source)
+static constexpr uint32_t CAN_BUS_TIMEOUT_MS =
+    2000; // 2 seconds with no messages = bus broken
 
 // Button debounce: require stable state for 50ms
-static uint32_t btn1Debounce = 0, btn2Debounce = 0;
-static bool btn1Raw = false, btn2Raw = false;
+static uint32_t btn1Debounce = 0, btn2Debounce = 0, btn3Debounce = 0,
+                btn4Debounce = 0;
+static bool btn1Raw = false, btn2Raw = false, btn3Raw = false, btn4Raw = false;
 static constexpr uint32_t DEBOUNCE_MS = 50;
 
-static const uint8_t ECU_NAME[8] = {
-    0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00,
-    (ECU_JOYSTICK_ID & 0xFF)
-};
+static const uint8_t ECU_NAME[8] = {0x00, 0x00, 0x00, 0x00,
+                                    0x00, 0x00, 0x00, (ECU_JOYSTICK_ID & 0xFF)};
 
 static void readInputs() {
-    g_localPot1 = analogRead(POT1_PIN);
-    g_localPot2 = analogRead(POT2_PIN);
-    g_localPot3 = analogRead(POT3_PIN);
+  g_localPot1 = analogRead(POT1_PIN);
+  g_localPot2 = analogRead(POT2_PIN);
+  g_localPot3 = analogRead(POT3_PIN);
+  g_localPot4 = analogRead(POT4_PIN);
 
-    // Debounce buttons: only accept state change after stable for DEBOUNCE_MS
-    uint32_t now = millis();
-    bool b1 = digitalRead(BTN1_PIN) == LOW;
-    bool b2 = digitalRead(BTN2_PIN) == LOW;
-    if (b1 != btn1Raw) { btn1Raw = b1; btn1Debounce = now; }
-    if (b2 != btn2Raw) { btn2Raw = b2; btn2Debounce = now; }
-    if (btn1Raw != g_localBtn1 && now - btn1Debounce >= DEBOUNCE_MS) g_localBtn1 = btn1Raw;
-    if (btn2Raw != g_localBtn2 && now - btn2Debounce >= DEBOUNCE_MS) g_localBtn2 = btn2Raw;
+  // Debounce buttons: only accept state change after stable for DEBOUNCE_MS
+  uint32_t now = millis();
+  bool b1 = digitalRead(BTN1_PIN) == LOW;
+  bool b2 = digitalRead(BTN2_PIN) == LOW;
+  bool b3 = digitalRead(BTN3_PIN) == LOW;
+  bool b4 = digitalRead(BTN4_PIN) == LOW;
+  if (b1 != btn1Raw) {
+    btn1Raw = b1;
+    btn1Debounce = now;
+  }
+  if (b2 != btn2Raw) {
+    btn2Raw = b2;
+    btn2Debounce = now;
+  }
+  if (b3 != btn3Raw) {
+    btn3Raw = b3;
+    btn3Debounce = now;
+  }
+  if (b4 != btn4Raw) {
+    btn4Raw = b4;
+    btn4Debounce = now;
+  }
+  if (btn1Raw != g_localBtn1 && now - btn1Debounce >= DEBOUNCE_MS)
+    g_localBtn1 = btn1Raw;
+  if (btn2Raw != g_localBtn2 && now - btn2Debounce >= DEBOUNCE_MS)
+    g_localBtn2 = btn2Raw;
+  if (btn3Raw != g_localBtn3 && now - btn3Debounce >= DEBOUNCE_MS)
+    g_localBtn3 = btn3Raw;
+  if (btn4Raw != g_localBtn4 && now - btn4Debounce >= DEBOUNCE_MS)
+    g_localBtn4 = btn4Raw;
 }
 
 static void updateLED() {
-    uint32_t now = millis();
-    if (now - lastLedUpdate < 50) return;
-    lastLedUpdate = now;
-    RgbColor color(
-        (ledR * ledBrightness) / 255,
-        (ledG * ledBrightness) / 255,
-        (ledB * ledBrightness) / 255
-    );
-    // Check TWAI hardware state + message timeout for bus failure detection
-    bool canBusBroken = !g_can->isOnline();
-    twai_status_info_t twaiStatus;
-    if (twai_get_status_info(&twaiStatus) == ESP_OK) {
-        // Bus is broken if: STOPPED, BUS_OFF, or high TX error counter
-        if (twaiStatus.state == TWAI_STATE_STOPPED || 
-            twaiStatus.state == TWAI_STATE_BUS_OFF ||
-            twaiStatus.tx_error_counter >= 127) {
-            canBusBroken = true;
-        }
+  uint32_t now = millis();
+  if (now - lastLedUpdate < 50)
+    return;
+  lastLedUpdate = now;
+  RgbColor color((ledR * ledBrightness) / 255, (ledG * ledBrightness) / 255,
+                 (ledB * ledBrightness) / 255);
+  // Check TWAI hardware state + message timeout for bus failure detection
+  bool canBusBroken = !g_can->isOnline();
+  twai_status_info_t twaiStatus;
+  if (twai_get_status_info(&twaiStatus) == ESP_OK) {
+    // Bus is broken if: STOPPED, BUS_OFF, or high TX error counter
+    if (twaiStatus.state == TWAI_STATE_STOPPED ||
+        twaiStatus.state == TWAI_STATE_BUS_OFF ||
+        twaiStatus.tx_error_counter >= 127) {
+      canBusBroken = true;
     }
-    // In NO_ACK mode, TWAI doesn't detect physical disconnection.
-    // Detect broken bus by checking if ANY messages were received recently.
-    if (now - lastAnyMsgReceived > CAN_BUS_TIMEOUT_MS) {
-        canBusBroken = true;
+  }
+  // In NO_ACK mode, TWAI doesn't detect physical disconnection.
+  // Detect broken bus by checking if ANY messages were received recently.
+  if (now - lastAnyMsgReceived > CAN_BUS_TIMEOUT_MS) {
+    canBusBroken = true;
+  }
+
+  if (identifyActive) {
+    // Identify: flashing white
+    if ((now / 150) % 2 == 0) {
+      color = RgbColor(255, 255, 255);
+    } else {
+      color = RgbColor(0, 0, 0);
     }
-    
-    if (identifyActive) {
-        // Identify: flashing white
-        if ((now / 150) % 2 == 0) {
-            color = RgbColor(255, 255, 255);
-        } else {
-            color = RgbColor(0, 0, 0);
-        }
-        if (now - identifyTimer > 3000) {
-            identifyActive = false;
-        }
-    } else if (canBusBroken) {
-        // CAN bus broken: blinking RED
-        if ((now / 500) % 2 == 0) {
-            color = RgbColor(100, 0, 0);
-        } else {
-            color = RgbColor(0, 0, 0);
-        }
-    } else if (lastMotorEcuMsg == 0 || (now - lastMotorEcuMsg > MOTOR_ECU_TIMEOUT_MS)) {
-        // Motor ECU offline: solid RED
-        color = RgbColor(80, 0, 0);
+    if (now - identifyTimer > 3000) {
+      identifyActive = false;
     }
-    strip.SetPixelColor(0, color);
-    strip.Show();
+  } else if (canBusBroken) {
+    // CAN bus broken: blinking RED
+    if ((now / 500) % 2 == 0) {
+      color = RgbColor(100, 0, 0);
+    } else {
+      color = RgbColor(0, 0, 0);
+    }
+  } else if (lastMotorEcuMsg == 0 ||
+             (now - lastMotorEcuMsg > MOTOR_ECU_TIMEOUT_MS)) {
+    // Motor ECU offline: solid RED
+    color = RgbColor(80, 0, 0);
+  }
+  strip.SetPixelColor(0, color);
+  strip.Show();
 }
 
 static void sendPot(uint8_t pf, uint16_t value) {
-    uint8_t data[2];
-    data[0] = value & 0xFF;
-    data[1] = (value >> 8) & 0xFF;
-    g_can->sendBroadcast(pf, data, 2, 6);
+  uint8_t data[2];
+  data[0] = value & 0xFF;
+  data[1] = (value >> 8) & 0xFF;
+  g_can->sendBroadcast(pf, data, 2, 6);
 }
 
 static void sendButtons() {
-    uint8_t data[1];
-    data[0] = 0;
-    if (g_localBtn1) data[0] |= 0x01;
-    if (g_localBtn2) data[0] |= 0x02;
-    g_can->sendBroadcast(PF_JOYSTICK_BUTTONS, data, 1, 6);
+  uint8_t data[1];
+  data[0] = 0;
+  if (g_localBtn1)
+    data[0] |= 0x01;
+  if (g_localBtn2)
+    data[0] |= 0x02;
+  if (g_localBtn3)
+    data[0] |= 0x04;
+  if (g_localBtn4)
+    data[0] |= 0x08;
+  g_can->sendBroadcast(PF_JOYSTICK_BUTTONS, data, 1, 6);
 }
 
 static void processCAN() {
-    CANMessage msg;
-    int count = 0;
-    while (g_can->receive(msg, 0)) {
-        count++;
-        if (count > 30) break;  // prevent lockup under heavy bus load
-        uint8_t pf = J1939_GET_PF(msg.id);
-        uint8_t ps = J1939_GET_PS(msg.id);
-        uint8_t sa = J1939_GET_SA(msg.id);
-        // Only count messages from OTHER devices for bus health (exclude loopback)
-        if (sa != g_can->getAddress()) {
-            lastAnyMsgReceived = millis();
-        }
-        // Track motor ECU messages (source address 0x20)
-        if (sa == 0x20) {
-            lastMotorEcuMsg = millis();
-        }
-        if (pf == PF_LED_COLOR) {
-            if (ps == DA_BROADCAST || ps == g_can->getAddress()) {
-                if (msg.len >= 3) {
-                    ledR = msg.data[0];
-                    ledG = msg.data[1];
-                    ledB = msg.data[2];
-                }
-            }
-        } else if (pf == PF_IDENTIFY) {
-            if (ps == DA_BROADCAST || ps == g_can->getAddress()) {
-                identifyActive = true;
-                identifyTimer = millis();
-            }
-        } else if (pf == PF_SET_ADDRESS) {
-            if (ps == g_can->getAddress() && msg.len >= 1) {
-                uint8_t newAddr = msg.data[0];
-                if (newAddr >= 0x20 && newAddr <= 0xEF) {
-                    cfgMgr.setForcedAddress(newAddr);
-                    Serial.printf("[Joystick%d] New address 0x%02X saved, rebooting...\n", ECU_JOYSTICK_ID, newAddr);
-                    delay(200);
-                    ESP.restart();
-                }
-            }
-        }
+  CANMessage msg;
+  int count = 0;
+  while (g_can->receive(msg, 0)) {
+    count++;
+    if (count > 30)
+      break; // prevent lockup under heavy bus load
+    uint8_t pf = J1939_GET_PF(msg.id);
+    uint8_t ps = J1939_GET_PS(msg.id);
+    uint8_t sa = J1939_GET_SA(msg.id);
+    // Only count messages from OTHER devices for bus health (exclude loopback)
+    if (sa != g_can->getAddress()) {
+      lastAnyMsgReceived = millis();
     }
+    // Track motor ECU messages (source address 0x20)
+    if (sa == 0x20) {
+      lastMotorEcuMsg = millis();
+    }
+    if (pf == PF_LED_COLOR) {
+      if (ps == DA_BROADCAST || ps == g_can->getAddress()) {
+        if (msg.len >= 3) {
+          ledR = msg.data[0];
+          ledG = msg.data[1];
+          ledB = msg.data[2];
+        }
+      }
+    } else if (pf == PF_IDENTIFY) {
+      if (ps == DA_BROADCAST || ps == g_can->getAddress()) {
+        identifyActive = true;
+        identifyTimer = millis();
+      }
+    } else if (pf == PF_SET_ADDRESS) {
+      if (ps == g_can->getAddress() && msg.len >= 1) {
+        uint8_t newAddr = msg.data[0];
+        if (newAddr >= 0x20 && newAddr <= 0xEF) {
+          cfgMgr.setForcedAddress(newAddr);
+          Serial.printf("[Joystick%d] New address 0x%02X saved, rebooting...\n",
+                        ECU_JOYSTICK_ID, newAddr);
+          delay(200);
+          ESP.restart();
+        }
+      }
+    }
+  }
 }
 
 static void sendHeartbeat() {
-    uint8_t data[8];
-    data[0] = g_can->isOnline() ? 0x01 : 0x00;
-    data[1] = (uint8_t)(millis() / 1000);
-    data[2] = (uint8_t)((millis() / 1000) >> 8);
-    data[3] = ECU_JOYSTICK_ID;
-    data[4] = (uint8_t)(g_can->getRxCount() & 0xFF);
-    data[5] = (uint8_t)(g_can->getTxCount() & 0xFF);
-    data[6] = 0;
-    data[7] = 0;
-    g_can->sendBroadcast(PF_HEARTBEAT, data, 8, 6);
+  uint8_t data[8];
+  data[0] = g_can->isOnline() ? 0x01 : 0x00;
+  data[1] = (uint8_t)(millis() / 1000);
+  data[2] = (uint8_t)((millis() / 1000) >> 8);
+  data[3] = ECU_JOYSTICK_ID;
+  data[4] = (uint8_t)(g_can->getRxCount() & 0xFF);
+  data[5] = (uint8_t)(g_can->getTxCount() & 0xFF);
+  data[6] = 0;
+  data[7] = 0;
+  g_can->sendBroadcast(PF_HEARTBEAT, data, 8, 6);
 }
 
 void ecu_setup() {
-    strip.Begin();
-    // LED startup test: flash RGB
-    strip.SetPixelColor(0, RgbColor(255, 0, 0)); strip.Show(); delay(200);
-    strip.SetPixelColor(0, RgbColor(0, 255, 0)); strip.Show(); delay(200);
-    strip.SetPixelColor(0, RgbColor(0, 0, 255)); strip.Show(); delay(200);
-    strip.SetPixelColor(0, RgbColor(0, 20, 0));  // dim green = ready
-    strip.Show();
-    analogReadResolution(10);
-    analogSetAttenuation(ADC_11db);
-    pinMode(BTN1_PIN, INPUT_PULLUP);
-    pinMode(BTN2_PIN, INPUT_PULLUP);
+  strip.Begin();
+  // LED startup test: flash RGB
+  strip.SetPixelColor(0, RgbColor(255, 0, 0));
+  strip.Show();
+  delay(200);
+  strip.SetPixelColor(0, RgbColor(0, 255, 0));
+  strip.Show();
+  delay(200);
+  strip.SetPixelColor(0, RgbColor(0, 0, 255));
+  strip.Show();
+  delay(200);
+  strip.SetPixelColor(0, RgbColor(0, 20, 0)); // dim green = ready
+  strip.Show();
+  analogReadResolution(10);
+  analogSetAttenuation(ADC_11db);
+  pinMode(BTN1_PIN, INPUT_PULLUP);
+  pinMode(BTN2_PIN, INPUT_PULLUP);
+  pinMode(BTN3_PIN, INPUT_PULLUP);
+  pinMode(BTN4_PIN, INPUT_PULLUP);
 #if CAN_ME2107_EN_PIN >= 0
-    pinMode(CAN_ME2107_EN_PIN, OUTPUT);
-    digitalWrite(CAN_ME2107_EN_PIN, HIGH);  // Enable CAN transceiver power supply
+  pinMode(CAN_ME2107_EN_PIN, OUTPUT);
+  digitalWrite(CAN_ME2107_EN_PIN, HIGH); // Enable CAN transceiver power supply
 #endif
 #if CAN_SPEED_MODE_PIN >= 0
-    pinMode(CAN_SPEED_MODE_PIN, OUTPUT);
-    digitalWrite(CAN_SPEED_MODE_PIN, LOW);  // High-speed mode (LOW = up to 1Mbps)
+  pinMode(CAN_SPEED_MODE_PIN, OUTPUT);
+  digitalWrite(CAN_SPEED_MODE_PIN, LOW); // High-speed mode (LOW = up to 1Mbps)
 #endif
-    cfgMgr.begin();
-    uint8_t forcedAddr = cfgMgr.getForcedAddress(ECU_PREFERRED_ADDRESS);
-    Serial.printf("[Joystick%d] Initializing CAN...\n", ECU_JOYSTICK_ID);
-    g_can = new ForwarderCAN(forcedAddr, ECU_NAME);
-    if (!g_can->begin(CAN_TX_PIN, CAN_RX_PIN, CAN_BITRATE)) {
-        Serial.println("[Joystick] CAN init FAILED!");
-        while (1) {
-            strip.SetPixelColor(0, RgbColor(20, 0, 0));
-            strip.Show();
-            delay(200);
-            strip.SetPixelColor(0, RgbColor(0, 0, 0));
-            strip.Show();
-            delay(200);
-        }
+  cfgMgr.begin();
+  uint8_t forcedAddr = cfgMgr.getForcedAddress(ECU_PREFERRED_ADDRESS);
+  Serial.printf("[Joystick%d] Initializing CAN...\n", ECU_JOYSTICK_ID);
+  g_can = new ForwarderCAN(forcedAddr, ECU_NAME);
+  if (!g_can->begin(CAN_TX_PIN, CAN_RX_PIN, CAN_BITRATE)) {
+    Serial.println("[Joystick] CAN init FAILED!");
+    while (1) {
+      strip.SetPixelColor(0, RgbColor(20, 0, 0));
+      strip.Show();
+      delay(200);
+      strip.SetPixelColor(0, RgbColor(0, 0, 0));
+      strip.Show();
+      delay(200);
     }
-    Serial.printf("[Joystick%d] Ready on address 0x%02X.\n", ECU_JOYSTICK_ID, g_can->getAddress());
-    // Initialize bus health timer - if no messages within 2s, bus is considered broken
-    lastAnyMsgReceived = millis();
-    Serial.printf("[Joystick%d] CAN_TX=%d CAN_RX=%d SPEED_MODE=%d ME2107_EN=%d bitrate=%d\n",
-        ECU_JOYSTICK_ID, CAN_TX_PIN, CAN_RX_PIN, CAN_SPEED_MODE_PIN, CAN_ME2107_EN_PIN, CAN_BITRATE);
+  }
+  Serial.printf("[Joystick%d] Ready on address 0x%02X.\n", ECU_JOYSTICK_ID,
+                g_can->getAddress());
+  // Initialize bus health timer - if no messages within 2s, bus is considered
+  // broken
+  lastAnyMsgReceived = millis();
+  Serial.printf("[Joystick%d] CAN_TX=%d CAN_RX=%d SPEED_MODE=%d ME2107_EN=%d "
+                "bitrate=%d\n",
+                ECU_JOYSTICK_ID, CAN_TX_PIN, CAN_RX_PIN, CAN_SPEED_MODE_PIN,
+                CAN_ME2107_EN_PIN, CAN_BITRATE);
 #if defined(ENABLE_OTA_WEBSERVER)
-    // Start WiFi AFTER CAN. With proper transceiver init, TWAI is stable.
-    char hostname[24];
-    snprintf(hostname, sizeof(hostname), "forwarder-joy%d-%02X", ECU_JOYSTICK_ID, forcedAddr);
-    ota_setup(hostname);
+  // Start WiFi AFTER CAN. With proper transceiver init, TWAI is stable.
+  char hostname[24];
+  snprintf(hostname, sizeof(hostname), "forwarder-joy%d-%02X", ECU_JOYSTICK_ID,
+           forcedAddr);
+  ota_setup(hostname);
 #endif
 }
 
 void ecu_loop() {
-    uint32_t now = millis();
-    yield();
-    g_can->loop();
-    readInputs();
-    processCAN();
-    yield();
+  uint32_t now = millis();
+  yield();
+  g_can->loop();
+  readInputs();
+  processCAN();
+  yield();
 
-    // Send all data at max 25Hz (40ms interval)
-    if (now - lastSend >= 40) {
-        lastSend = now;
-        sendPot(PF_JOYSTICK_POT1, g_localPot1);
-        sendPot(PF_JOYSTICK_POT2, g_localPot2);
-        sendPot(PF_JOYSTICK_POT3, g_localPot3);
-        sendButtons();
-        yield();
-        prevPot1 = g_localPot1;
-        prevPot2 = g_localPot2;
-        prevPot3 = g_localPot3;
-        prevButtons = (g_localBtn1 ? 0x01 : 0) | (g_localBtn2 ? 0x02 : 0);
-    }
-    if (now - lastHeartbeat >= 1000) {
-        lastHeartbeat = now;
-        if (g_can->isOnline()) {
-            sendHeartbeat();
-        }
-        // TWAI-level diagnostics
-        twai_status_info_t twai_status;
-        if (twai_get_status_info(&twai_status) == ESP_OK) {
-            const char* state_names[] = {"STOPPED","RUNNING","BUS_OFF","REC"};
-            const char* sname = (twai_status.state < 4) ? state_names[twai_status.state] : "???";
-            Serial.printf("[CAN] TX:%lu RX:%lu ERR:%lu state=%d pots=%d,%d,%d btn=%d,%d\n",
-                g_can->getTxCount(), g_can->getRxCount(), g_can->getErrorCount(),
-                g_can->getState(), g_localPot1, g_localPot2, g_localPot3,
-                g_localBtn1, g_localBtn2);
-            Serial.printf("[TWAI] hw_state=%s msgs_to_tx=%lu msgs_to_rx=%lu tx_err=%lu rx_err=%lu arb_lost=%lu bus_err=%lu\n",
-                sname, twai_status.msgs_to_tx, twai_status.msgs_to_rx,
-                twai_status.tx_error_counter, twai_status.rx_error_counter,
-                twai_status.arb_lost_count, twai_status.bus_error_count);
-        }
-    }
-    updateLED();
-#if defined(ENABLE_OTA_WEBSERVER)
+  // Send all data at max 25Hz (40ms interval)
+  if (now - lastSend >= 40) {
+    lastSend = now;
+    sendPot(PF_JOYSTICK_POT1, g_localPot1);
+    sendPot(PF_JOYSTICK_POT2, g_localPot2);
+    sendPot(PF_JOYSTICK_POT3, g_localPot3);
+    sendPot(PF_JOYSTICK_POT4, g_localPot4);
+    sendButtons();
     yield();
-    ota_loop();
+    prevPot1 = g_localPot1;
+    prevPot2 = g_localPot2;
+    prevPot3 = g_localPot3;
+    prevPot4 = g_localPot4;
+    prevButtons = (g_localBtn1 ? 0x01 : 0) | (g_localBtn2 ? 0x02 : 0) |
+                  (g_localBtn3 ? 0x04 : 0) | (g_localBtn4 ? 0x08 : 0);
+  }
+  if (now - lastHeartbeat >= 1000) {
+    lastHeartbeat = now;
+    if (g_can->isOnline()) {
+      sendHeartbeat();
+    }
+    // TWAI-level diagnostics
+    twai_status_info_t twai_status;
+    if (twai_get_status_info(&twai_status) == ESP_OK) {
+      const char *state_names[] = {"STOPPED", "RUNNING", "BUS_OFF", "REC"};
+      const char *sname =
+          (twai_status.state < 4) ? state_names[twai_status.state] : "???";
+      Serial.printf("[CAN] TX:%lu RX:%lu ERR:%lu state=%d pots=%d,%d,%d,%d "
+                    "btn=%d,%d,%d,%d\n",
+                    g_can->getTxCount(), g_can->getRxCount(),
+                    g_can->getErrorCount(), g_can->getState(), g_localPot1,
+                    g_localPot2, g_localPot3, g_localPot4, g_localBtn1,
+                    g_localBtn2, g_localBtn3, g_localBtn4);
+      Serial.printf("[TWAI] hw_state=%s msgs_to_tx=%lu msgs_to_rx=%lu "
+                    "tx_err=%lu rx_err=%lu arb_lost=%lu bus_err=%lu\n",
+                    sname, twai_status.msgs_to_tx, twai_status.msgs_to_rx,
+                    twai_status.tx_error_counter, twai_status.rx_error_counter,
+                    twai_status.arb_lost_count, twai_status.bus_error_count);
+    }
+  }
+  updateLED();
+#if defined(ENABLE_OTA_WEBSERVER)
+  yield();
+  ota_loop();
 #endif
 }
 

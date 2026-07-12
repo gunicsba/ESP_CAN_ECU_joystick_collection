@@ -9,30 +9,32 @@
 // =============================================================================
 
 #if defined(ECU_TYPE_MOTOR_DRIVER)
-    #include "ecu_motor_driver.h"
+#include "ecu_motor_driver.h"
 #elif defined(ECU_TYPE_JOYSTICK)
-    #include "ecu_joystick.h"
+#include "ecu_joystick.h"
 #else
-    #error "No ECU_TYPE defined! Define ECU_TYPE_MOTOR_DRIVER or ECU_TYPE_JOYSTICK"
+#error "No ECU_TYPE defined! Define ECU_TYPE_MOTOR_DRIVER or ECU_TYPE_JOYSTICK"
 #endif
 
 void setup() {
-    Serial.begin(115200);
+  Serial.begin(115200);
 #if ARDUINO_USB_CDC_ON_BOOT
-    // Wait for USB-CDC enumeration
-    unsigned long startWait = millis();
-    while (!Serial && millis() - startWait < 3000) { delay(10); }
+  // Wait for USB-CDC enumeration
+  unsigned long startWait = millis();
+  while (!Serial && millis() - startWait < 3000) {
+    delay(10);
+  }
 #else
-    delay(500);
+  delay(500);
 #endif
-    Serial.println("\n============================================");
-    Serial.println("  Forwarder CAN Controller Starting...");
-    Serial.println("============================================");
+  Serial.println("\n============================================");
+  Serial.println("  Forwarder CAN Controller Starting...");
+  Serial.println("============================================");
 
-    ecu_setup();
+  ecu_setup();
 }
 
 void loop() {
-    ecu_loop();
-    yield();
+  ecu_loop();
+  yield();
 }

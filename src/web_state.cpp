@@ -4,7 +4,7 @@
 // in the ECU file that is NOT being compiled in this build.
 
 #if !defined(ECU_TYPE_MOTOR_DRIVER)
-uint16_t g_joyPots[256][3] = {{0}};
+uint16_t g_joyPots[256][4] = {{0}};
 uint8_t g_joyButtons[256] = {0};
 uint32_t g_joyUpdateTime[256] = {0};
 uint32_t g_joyButtonUpdateTime[256] = {0};
@@ -12,10 +12,17 @@ uint16_t g_solenoidValues[MAX_AXIS_COUNT] = {0};
 MotorConfig g_motorCfg;
 bool g_pca2Present = false;
 CanOutputRule g_canOutputRules[MAX_CAN_OUTPUT_RULES];
+ButtonOutputRule g_btnOutputRules[MAX_BUTTON_OUTPUT_RULES];
+CustomCanButton g_customCanButtons[MAX_CUSTOM_CAN_BUTTONS];
+JoystickLabel g_joyLabels[MAX_JOYSTICK_LABELS];
+OutputLabel g_outLabels[MAX_OUTPUT_LABELS];
+bool g_customBtnStates[MAX_CUSTOM_CAN_BUTTONS] = {false};
 #endif
 
 #if !defined(ECU_TYPE_JOYSTICK)
-uint16_t g_localPot1 = 512, g_localPot2 = 512, g_localPot3 = 512;
-bool g_localBtn1 = false, g_localBtn2 = false;
+uint16_t g_localPot1 = 512, g_localPot2 = 512, g_localPot3 = 512,
+         g_localPot4 = 512;
+bool g_localBtn1 = false, g_localBtn2 = false, g_localBtn3 = false,
+     g_localBtn4 = false;
 uint8_t g_ecuJoystickId = 0;
 #endif
