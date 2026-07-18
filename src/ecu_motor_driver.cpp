@@ -4,7 +4,10 @@
 
 #include "ForwarderCAN.h"
 #include "ForwarderConfig.h"
+#include "WT5500Eth.h"
 #include "can_output.h"
+#include "lwip/netdb.h"
+#include "lwip/sockets.h"
 #include "ota_webserver.h"
 #include "web_state.h"
 #include <Adafruit_PWMServoDriver.h>
@@ -35,6 +38,22 @@
 #ifndef WS2812_PIN
 #define WS2812_PIN 48
 #endif
+#ifndef OUTPUT_ACTIVE_PIN
+#define OUTPUT_ACTIVE_PIN                                                      \
+  4 // GPIO4: HIGH when any output channel is active  (F1 output green led)
+#endif
+
+// WT5500 SPI Ethernet pins (matching Arduino sample)
+#define WT5500_MISO 37
+#define WT5500_MOSI 35
+#define WT5500_SCLK 36
+#define WT5500_CS 38
+#define WT5500_INT 45
+#define WT5500_RST 48
+
+// UDP ports for AgOpenGPS communication
+#define UDP_AOG_PORT 8888
+#define UDP_AGIO_PORT 9999
 
 static Adafruit_PWMServoDriver pca1 =
     Adafruit_PWMServoDriver(PCA9685_I2C_ADDR1);
@@ -75,6 +94,20 @@ CustomCanButton g_customCanButtons[MAX_CUSTOM_CAN_BUTTONS];
 JoystickLabel g_joyLabels[MAX_JOYSTICK_LABELS];
 OutputLabel g_outLabels[MAX_OUTPUT_LABELS];
 bool g_customBtnStates[MAX_CUSTOM_CAN_BUTTONS] = {false};
+
+// Ethernet state
+static bool g_ethConnected = false;
+// lwIP UDP sockets for Ethernet
+static int g_sockAOG = -1;  // Socket for AOG (port 8888)
+static int g_sockAGIO = -1; // Socket for AGIO (port 9999)
+
+// Joystick command state (from web UI)
+bool g_joyCmdActive[MAX_JOY_FUNCTIONS] = {false};
+JoystickOutputMapping g_joyMappings[MAX_JOY_FUNCTIONS];
+uint32_t g_lastJoyCmd = 0;
+// Tracks which output channels are being driven by web joy buttons
+// (so updateAxes skips them to prevent flickering)
+bool g_joyOverrideChannels[16] = {false};
 
 static const uint8_t ECU_NAME[8] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, (ECU_NAME_MOTOR_DRIVER & 0xFF)};
@@ -290,17 +323,21 @@ static void updateAxes() {
       mapAxis(axis, pot, fwd, rev);
       uint8_t chFwd = axis.outputChannel;
       uint8_t chRev = axis.outputChannel + 1;
-      if (fwd != g_solenoidValues[chFwd]) {
+      // Skip channels being driven by web joy buttons (they have priority)
+      if (!g_joyOverrideChannels[chFwd] && fwd != g_solenoidValues[chFwd]) {
         g_solenoidValues[chFwd] = fwd;
         setPWMTracked(chFwd, fwd);
       }
-      if (axis.isBidirectional() && rev != g_solenoidValues[chRev]) {
+      if (axis.isBidirectional() && !g_joyOverrideChannels[chRev] &&
+          rev != g_solenoidValues[chRev]) {
         g_solenoidValues[chRev] = rev;
         setPWMTracked(chRev, rev);
       }
     } else {
-      // Joystick timed out, zero both channels
-      zeroAxisChannels(axis);
+      // Joystick timed out, zero both channels (unless joy-overridden)
+      if (!g_joyOverrideChannels[axis.outputChannel]) {
+        zeroAxisChannels(axis);
+      }
     }
   }
 }
@@ -547,12 +584,16 @@ static void autoConfigDefaults() {
     uint8_t pot;
     uint8_t ch;
   } defaults[] = {
-      {0x21, 0, 0}, // Joy1 Pot1 -> ch0(fwd)+ch1(rev)
-      {0x21, 1, 2}, // Joy1 Pot2 -> ch2(fwd)+ch3(rev)
-      {0x22, 0, 4}, // Joy2 Pot1 -> ch4(fwd)+ch5(rev)
-      {0x22, 1, 6}, // Joy2 Pot2 -> ch6(fwd)+ch7(rev)
+      {0x21, 0, 0},  // Joy1 Pot1 -> Out 1 (ch0+ch1 pair)
+      {0x21, 1, 2},  // Joy1 Pot2 -> Out 3 (ch2+ch3 pair)
+      {0x22, 0, 4},  // Joy2 Pot1 -> Out 5 (ch4+ch5 pair)
+      {0x22, 1, 6},  // Joy2 Pot2 -> Out 7 (ch6+ch7 pair)
+      {0x23, 0, 8},  // Joy3 Pot1 -> Out 9 (ch8+ch9 pair)
+      {0x23, 1, 10}, // Joy3 Pot2 -> Out 11 (ch10+ch11 pair)
+      {0x24, 0, 12}, // Joy4 Pot1 -> Out 13 (ch12+ch13 pair)
+      {0x24, 1, 14}, // Joy4 Pot2 -> Out 15 (ch14+ch15 pair)
   };
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < 8; i++) {
     AxisConfig &ax = g_motorCfg.axes[i];
     ax.sourceAddress = defaults[i].src;
     ax.potIndex = defaults[i].pot;
@@ -560,21 +601,244 @@ static void autoConfigDefaults() {
     ax.deadbandMin = 307; // midpoint ±20%
     ax.deadbandMax = 717; // midpoint ±20%
     ax.pwmMin = 20;       // ~8%
-    ax.pwmMax = 100;      // ~39%
+    ax.pwmMax = 255;      // full PWM
     ax.flags = FLAG_AXIS_ENABLED | FLAG_AXIS_BIDIRECTIONAL;
     cfgMgr.saveAxisConfig(i, ax);
   }
+
+  // Set default joystick position labels
+  const char *defaultPositions[] = {"left", "right", "center", "rear"};
+  const uint8_t joyAddresses[] = {0x21, 0x22, 0x23, 0x24};
+  for (int i = 0; i < MAX_JOYSTICK_LABELS; i++) {
+    JoystickLabel &jl = g_joyLabels[i];
+    jl.sourceAddress = joyAddresses[i];
+    strncpy(jl.position, defaultPositions[i], sizeof(jl.position) - 1);
+    jl.position[sizeof(jl.position) - 1] = '\0';
+    // Set default axis labels
+    const char *defaultAxisLabels[] = {"X", "Y", "Z", "W"};
+    for (int a = 0; a < 4; a++) {
+      strncpy(jl.axisLabels[a], defaultAxisLabels[a],
+              sizeof(jl.axisLabels[a]) - 1);
+      jl.axisLabels[a][sizeof(jl.axisLabels[a]) - 1] = '\0';
+    }
+    cfgMgr.saveJoystickLabel(i, jl);
+  }
+  Serial.println("[MotorDriver] Default joystick labels saved to NVS");
+
   Serial.println("[MotorDriver] Default config saved to NVS");
+}
+
+// ---------------------------------------------------------------------------
+// WT5500 Ethernet initialization
+// ---------------------------------------------------------------------------
+static void initEthernet() {
+  Serial.println("[MotorDriver] Initializing WT5500 Ethernet...");
+
+  if (!WETH.begin(WT5500_MISO, WT5500_MOSI, WT5500_SCLK, WT5500_CS, WT5500_RST,
+                  WT5500_INT)) {
+    Serial.println("[MotorDriver] WT5500 init FAILED!");
+    return;
+  }
+
+  // Configure static IP from NVS config
+  uint8_t ip3 = 40;
+  IPAddress localIP(g_motorCfg.ethIP0, g_motorCfg.ethIP1, g_motorCfg.ethIP2,
+                    ip3);
+  IPAddress gateway(g_motorCfg.ethIP0, g_motorCfg.ethIP1, g_motorCfg.ethIP2, 1);
+  IPAddress subnet(255, 255, 255, 0);
+
+  if (!WETH.config(localIP, gateway, subnet)) {
+    Serial.println("[MotorDriver] Ethernet config failed");
+  } else {
+    Serial.printf("[MotorDriver] Ethernet IP: %d.%d.%d.%d\n", g_motorCfg.ethIP0,
+                  g_motorCfg.ethIP1, g_motorCfg.ethIP2, ip3);
+  }
+
+  // Wait briefly for link
+  for (int i = 0; i < 10 && !WETH.isConnected(); i++) {
+    delay(500);
+    Serial.printf("[MotorDriver] Waiting for Ethernet link... (%d)\n", i + 1);
+  }
+
+  if (WETH.isConnected()) {
+    g_ethConnected = true;
+    Serial.printf("[MotorDriver] Ethernet connected! IP: %s\n",
+                  WETH.localIP().toString().c_str());
+  } else {
+    Serial.println("[MotorDriver] Ethernet: no link yet, will retry in loop");
+  }
+
+  // Start UDP listeners using lwIP sockets
+  // Create AOG socket (port 8888)
+  g_sockAOG = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (g_sockAOG >= 0) {
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(UDP_AOG_PORT);
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (bind(g_sockAOG, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+      Serial.printf("[MotorDriver] Failed to bind AOG socket: %d\n", errno);
+      close(g_sockAOG);
+      g_sockAOG = -1;
+    } else {
+      // Set non-blocking
+      int flags = fcntl(g_sockAOG, F_GETFL, 0);
+      fcntl(g_sockAOG, F_SETFL, flags | O_NONBLOCK);
+    }
+  }
+
+  // Create AGIO socket (port 9999)
+  g_sockAGIO = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (g_sockAGIO >= 0) {
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(UDP_AGIO_PORT);
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (bind(g_sockAGIO, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+      Serial.printf("[MotorDriver] Failed to bind AGIO socket: %d\n", errno);
+      close(g_sockAGIO);
+      g_sockAGIO = -1;
+    } else {
+      // Set non-blocking
+      int flags = fcntl(g_sockAGIO, F_GETFL, 0);
+      fcntl(g_sockAGIO, F_SETFL, flags | O_NONBLOCK);
+    }
+  }
+  Serial.printf("[MotorDriver] UDP listening on ports %d, %d\n", UDP_AOG_PORT,
+                UDP_AGIO_PORT);
+}
+
+// ---------------------------------------------------------------------------
+// Process incoming UDP for PGN 32503 (subnet change) and AGIO PGN 201
+// ---------------------------------------------------------------------------
+static void processUDP() {
+  uint8_t data[128];
+  struct sockaddr_in src_addr;
+  socklen_t addr_len = sizeof(src_addr);
+
+  // Check AOG UDP (port 8888)
+  if (g_sockAOG >= 0) {
+    int len = recvfrom(g_sockAOG, data, sizeof(data), MSG_DONTWAIT,
+                       (struct sockaddr *)&src_addr, &addr_len);
+    if (len > 0) {
+      // PGN 32503: header bytes 247, 126
+      if (len >= 6 && data[0] == 247 && data[1] == 126) {
+        g_motorCfg.ethIP0 = data[2];
+        g_motorCfg.ethIP1 = data[3];
+        g_motorCfg.ethIP2 = data[4];
+        cfgMgr.saveMotorConfig(g_motorCfg);
+        Serial.printf("[MotorDriver] PGN 32503 subnet update: %d.%d.%d.x, "
+                      "restarting...\n",
+                      g_motorCfg.ethIP0, g_motorCfg.ethIP1, g_motorCfg.ethIP2);
+        delay(200);
+        ESP.restart();
+      }
+    }
+  }
+
+  // Check AGIO UDP (port 9999)
+  if (g_sockAGIO >= 0) {
+    addr_len = sizeof(src_addr);
+    int len = recvfrom(g_sockAGIO, data, sizeof(data), MSG_DONTWAIT,
+                       (struct sockaddr *)&src_addr, &addr_len);
+    if (len > 0) {
+      // AGIO PGN 201: header 128, 129, 127, 201, 5, 201, 201
+      if (len >= 10 && data[0] == 128 && data[1] == 129 && data[2] == 127 &&
+          data[3] == 201 && data[4] == 5 && data[5] == 201 && data[6] == 201) {
+        g_motorCfg.ethIP0 = data[7];
+        g_motorCfg.ethIP1 = data[8];
+        g_motorCfg.ethIP2 = data[9];
+        cfgMgr.saveMotorConfig(g_motorCfg);
+        Serial.printf("[MotorDriver] AGIO PGN 201 subnet update: %d.%d.%d.x, "
+                      "restarting...\n",
+                      g_motorCfg.ethIP0, g_motorCfg.ethIP1, g_motorCfg.ethIP2);
+        delay(200);
+        ESP.restart();
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Process joystick commands from web UI -> drive PWM outputs directly
+// Web joy buttons have priority over CAN joystick axis on the same channels.
+// ---------------------------------------------------------------------------
+static void processJoystickCommands() {
+  // Safety: auto-clear all joystick commands after 2s of no updates
+  if (g_lastJoyCmd > 0 && millis() - g_lastJoyCmd > 2000) {
+    for (int i = 0; i < MAX_JOY_FUNCTIONS; i++) {
+      g_joyCmdActive[i] = false;
+    }
+    g_lastJoyCmd = 0;
+  }
+
+  // Clear override flags each cycle - only active commands will set them
+  memset(g_joyOverrideChannels, 0, sizeof(g_joyOverrideChannels));
+
+  // Apply each active joystick command directly to its output
+  // Even index (pos/fel/bal/nyit) → mapping.outputChannel
+  // Odd index (neg/le/jobb/csuk)  → mapping.outputChannel + 1
+  // Note: "mindketto" (both) buttons are handled by frontend which sends
+  // both individual commands (e.g. fokeret-nyit + segedkeret-nyit)
+  for (int i = 0; i < MAX_JOY_FUNCTIONS; i++) {
+    if (!g_joyCmdActive[i])
+      continue;
+
+    const JoystickOutputMapping &mapping = g_joyMappings[i];
+    uint8_t baseCh = mapping.outputChannel;
+    if (baseCh >= 16)
+      continue;
+
+    // Find the axis config for this channel pair to get PWM Max and invert flag
+    uint16_t pwmValue = 4095; // default full PWM
+    bool inverted = false;
+    for (int ax = 0; ax < MAX_AXIS_COUNT; ax++) {
+      if (g_motorCfg.axes[ax].outputChannel == baseCh) {
+        // pwmMax is 0-255, scale to 0-4095
+        pwmValue = (uint16_t)g_motorCfg.axes[ax].pwmMax * 16;
+        if (pwmValue > 4095)
+          pwmValue = 4095;
+        // Check invert flag (FLAG_AXIS_INVERT = 4)
+        inverted = (g_motorCfg.axes[ax].flags & 4) != 0;
+        break;
+      }
+    }
+
+    // Determine output channel based on direction and invert flag
+    uint8_t outCh;
+    bool isPos = (i % 2 == 0);
+    if (inverted) {
+      // Swap pos/neg when inverted
+      outCh = isPos ? (baseCh + 1) : baseCh;
+    } else {
+      outCh = isPos ? baseCh : (baseCh + 1);
+    }
+    if (outCh >= 16)
+      continue;
+
+    // Direct PWM - overrides axis system on this channel
+    setPWMTracked(outCh, pwmValue);
+    g_solenoidValues[outCh] = pwmValue;
+    g_joyOverrideChannels[outCh] = true;
+  }
 }
 
 void ecu_setup() {
   strip.Begin();
   strip.SetPixelColor(0, RgbColor(0, 0, 20));
   strip.Show();
+  // Output active indicator pin
+  pinMode(OUTPUT_ACTIVE_PIN, OUTPUT);
+  digitalWrite(OUTPUT_ACTIVE_PIN, LOW);
   Serial.begin(115200);
   delay(200);
   Serial.println("[MotorDriver] Initializing config...");
   cfgMgr.begin();
+  if (!cfgMgr.checkVersion()) {
+    Serial.println("[MotorDriver] NVS cleared - using defaults");
+  }
   uint8_t forcedAddr = cfgMgr.getForcedAddress(ECU_PREFERRED_ADDRESS);
   cfgMgr.loadMotorConfig(g_motorCfg);
   cfgMgr.loadCanOutputRules(g_canOutputRules);
@@ -582,7 +846,30 @@ void ecu_setup() {
   cfgMgr.loadCustomCanButtons(g_customCanButtons);
   cfgMgr.loadJoystickLabels(g_joyLabels);
   cfgMgr.loadOutputLabels(g_outLabels);
+  cfgMgr.loadJoystickMappings(g_joyMappings);
   autoConfigDefaults();
+
+  // Set default joy mappings if not configured (all channels 0 after flash
+  // erase) Check if pair 0 pos is still at default (ch 0) and pair 1 is also at
+  // ch 0 (which means no saved config exists)
+  if (g_joyMappings[0].outputChannel == 0 &&
+      g_joyMappings[2].outputChannel == 0) {
+    Serial.println("[MotorDriver] Setting default joy mappings...");
+    // Default: each pair maps to its corresponding output pair
+    const uint8_t defaultJoyCh[] = {0, 2, 4, 6, 8, 10}; // pair 0-5
+    for (int pi = 0; pi < 6; pi++) {
+      g_joyMappings[pi * 2].outputChannel = defaultJoyCh[pi]; // pos
+      g_joyMappings[pi * 2].invert = false;
+      g_joyMappings[pi * 2 + 1].outputChannel = defaultJoyCh[pi]; // neg
+      g_joyMappings[pi * 2 + 1].invert = false;
+    }
+    // Mark remaining functions (12-19) as off
+    for (int i = 12; i < MAX_JOY_FUNCTIONS; i++) {
+      g_joyMappings[i].outputChannel = 255; // off
+      g_joyMappings[i].invert = false;
+    }
+    cfgMgr.saveJoystickMappings(g_joyMappings);
+  }
   // Dump loaded config to serial
   Serial.println("[MotorDriver] Loaded axis config:");
   for (int i = 0; i < MAX_AXIS_COUNT; i++) {
@@ -645,6 +932,9 @@ void ecu_setup() {
   ota_setup(hostname);
 #endif
   Serial.println("[MotorDriver] Setup complete, entering loop...");
+
+  // Initialize WT5500 Ethernet after CAN is up
+  initEthernet();
 }
 
 static uint32_t lastStatusPrint = 0;
@@ -658,9 +948,22 @@ void ecu_loop() {
   yield();
   g_can->loop();
   processCAN();
+  processUDP();
   yield();
   updateAxes();
   updateButtonOutputs();
+  processJoystickCommands();
+  // Update output active indicator pin (GPIO5)
+  {
+    bool anyActive = false;
+    for (int i = 0; i < MAX_AXIS_COUNT; i++) {
+      if (g_solenoidValues[i] > 0) {
+        anyActive = true;
+        break;
+      }
+    }
+    digitalWrite(OUTPUT_ACTIVE_PIN, anyActive ? HIGH : LOW);
+  }
   yield();
 
   // Self-loopback test: send a test frame every 3s

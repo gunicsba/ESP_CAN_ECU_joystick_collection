@@ -213,7 +213,8 @@ input[type="range"] {
     </div>
 </header>
 <div class="tabs">
-    <button class="tab active" onclick="switchTab('dash')">Dashboard</button>
+    <button class="tab active" onclick="switchTab('joystick')">Joystick</button>
+    <button class="tab" onclick="switchTab('dash')">Dashboard</button>
     <button class="tab" onclick="switchTab('modules')">Modules</button>
     <button class="tab" onclick="switchTab('mapping')">Motor Mapping</button>
     <button class="tab" onclick="switchTab('labels')">Labels</button>
@@ -226,7 +227,64 @@ input[type="range"] {
     <button class="tab" onclick="switchTab('ota')">OTA Update</button>
 </div>
 
-<div id="dash" class="panel active">
+<div id="joystick" class="panel active">
+    <div class="card" style="padding:10px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:6px;border-radius:14px;background:#22272b;margin-bottom:10px">
+            <button class="joy-mode-btn active" onclick="joySwitchScreen('mainScreen',this)" style="min-height:48px;border-radius:12px;background:linear-gradient(180deg,#69d2c5,#369b90);font-weight:900;font-size:14px;color:#fff;border:0;cursor:pointer">F&#x151; vez&#xe9;rl&#xe9;s</button>
+            <button class="joy-mode-btn" onclick="joySwitchScreen('foldScreen',this)" style="min-height:48px;border-radius:12px;background:transparent;font-weight:900;font-size:14px;color:#e2e8f0;border:0;cursor:pointer">Keret nyit&#xe1;s / csuk&#xe1;s</button>
+        </div>
+
+        <div id="mainScreen" class="joy-screen">
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,minmax(80px,1fr));gap:8px">
+                <button class="joy-btn momentary" data-cmd="bal-szarny-fel" style="min-height:80px;border-radius:14px;background:linear-gradient(180deg,#3d454a,#30363a);border:1px solid rgba(255,255,255,.08);font-size:clamp(13px,3.5vw,20px);font-weight:900;color:#e2e8f0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:6px;cursor:pointer;touch-action:manipulation"><span style="font-size:clamp(24px,6vw,42px)">&#x2196;</span><span>Bal sz&#xe1;rny fel</span></button>
+                <button class="joy-btn momentary" data-cmd="keretmagassag-fel" style="min-height:80px;border-radius:14px;background:linear-gradient(180deg,#3d454a,#30363a);border:1px solid rgba(255,255,255,.08);font-size:clamp(13px,3.5vw,20px);font-weight:900;color:#e2e8f0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:6px;cursor:pointer;touch-action:manipulation"><span style="font-size:clamp(24px,6vw,42px)">&#x25B2;</span><span>K&#xf6;retmagass&#xe1;g fel</span></button>
+                <button class="joy-btn momentary" data-cmd="jobb-szarny-fel" style="min-height:80px;border-radius:14px;background:linear-gradient(180deg,#3d454a,#30363a);border:1px solid rgba(255,255,255,.08);font-size:clamp(13px,3.5vw,20px);font-weight:900;color:#e2e8f0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:6px;cursor:pointer;touch-action:manipulation"><span style="font-size:clamp(24px,6vw,42px)">&#x2197;</span><span>Jobb sz&#xe1;rny fel</span></button>
+
+                <button class="joy-btn momentary" data-cmd="billentes-bal" style="min-height:80px;border-radius:14px;background:linear-gradient(180deg,#3d454a,#30363a);border:1px solid rgba(255,255,255,.08);font-size:clamp(13px,3.5vw,20px);font-weight:900;color:#e2e8f0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:6px;cursor:pointer;touch-action:manipulation"><span style="font-size:clamp(24px,6vw,42px)">&#x21B6;</span><span>Billent&#xe9;s bal</span></button>
+                <button class="joy-btn" disabled style="min-height:80px;border-radius:50%;aspect-ratio:1/1;width:min(80%,140px);justify-self:center;align-self:center;background:radial-gradient(circle at 35% 30%,#626d73,#2d3337 60%,#22272a);border:6px solid #1d2124;font-weight:900;font-size:clamp(12px,3.5vw,20px);color:#666;opacity:0.5;display:flex;align-items:center;justify-content:center;cursor:not-allowed">MASTER</button>
+                <button class="joy-btn momentary" data-cmd="billentes-jobb" style="min-height:80px;border-radius:14px;background:linear-gradient(180deg,#3d454a,#30363a);border:1px solid rgba(255,255,255,.08);font-size:clamp(13px,3.5vw,20px);font-weight:900;color:#e2e8f0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:6px;cursor:pointer;touch-action:manipulation"><span style="font-size:clamp(24px,6vw,42px)">&#x21B7;</span><span>Billent&#xe9;s jobb</span></button>
+
+                <button class="joy-btn momentary" data-cmd="bal-szarny-le" style="min-height:80px;border-radius:14px;background:linear-gradient(180deg,#3d454a,#30363a);border:1px solid rgba(255,255,255,.08);font-size:clamp(13px,3.5vw,20px);font-weight:900;color:#e2e8f0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:6px;cursor:pointer;touch-action:manipulation"><span style="font-size:clamp(24px,6vw,42px)">&#x2199;</span><span>Bal sz&#xe1;rny le</span></button>
+                <button class="joy-btn momentary" data-cmd="keretmagassag-le" style="min-height:80px;border-radius:14px;background:linear-gradient(180deg,#3d454a,#30363a);border:1px solid rgba(255,255,255,.08);font-size:clamp(13px,3.5vw,20px);font-weight:900;color:#e2e8f0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:6px;cursor:pointer;touch-action:manipulation"><span style="font-size:clamp(24px,6vw,42px)">&#x25BC;</span><span>K&#xf6;retmagass&#xe1;g le</span></button>
+                <button class="joy-btn momentary" data-cmd="jobb-szarny-le" style="min-height:80px;border-radius:14px;background:linear-gradient(180deg,#3d454a,#30363a);border:1px solid rgba(255,255,255,.08);font-size:clamp(13px,3.5vw,20px);font-weight:900;color:#e2e8f0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:6px;cursor:pointer;touch-action:manipulation"><span style="font-size:clamp(24px,6vw,42px)">&#x2198;</span><span>Jobb sz&#xe1;rny le</span></button>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px">
+                <button class="joy-btn" disabled style="min-height:68px;border-radius:14px;background:linear-gradient(180deg,#3d454a,#30363a);border:1px solid rgba(255,255,255,.08);font-weight:900;font-size:14px;color:#666;opacity:0.5;cursor:not-allowed;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px"><span style="font-size:24px">&#x25A6;</span><span>Szakaszok</span></button>
+                <button class="joy-btn" disabled style="min-height:68px;border-radius:14px;background:linear-gradient(180deg,#3d454a,#30363a);border:1px solid rgba(255,255,255,.08);font-weight:900;font-size:14px;color:#666;opacity:0.5;cursor:not-allowed;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px"><span style="font-size:24px">A</span><span>Automata</span></button>
+                <button class="joy-btn" disabled style="min-height:68px;border-radius:14px;background:linear-gradient(180deg,#3d454a,#30363a);border:1px solid rgba(255,255,255,.08);font-weight:900;font-size:14px;color:#666;opacity:0.5;cursor:not-allowed;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px"><span style="font-size:24px">&#x25A0;</span><span>STOP</span></button>
+            </div>
+        </div>
+
+        <div id="foldScreen" class="joy-screen" style="display:none">
+            <div style="padding:10px;border-radius:16px;background:rgba(0,0,0,.14);border:1px solid rgba(255,255,255,.05)">
+                <h3 style="margin:0 0 8px;font-size:clamp(15px,4vw,20px)">Keret nyit&#xe1;s / csuk&#xe1;s</h3>
+                <div style="display:grid;grid-template-columns:1fr 50px 1fr;gap:7px;margin-bottom:6px;color:#94a3b8;font-size:12px;font-weight:800;text-align:center">
+                    <span>F&#x151;keret</span><span>Egy&#xfc;tt</span><span>Seg&#xe9;dkeret</span>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 50px 1fr;gap:7px;margin-bottom:9px">
+                    <button class="joy-btn momentary" data-cmd="fokeret-nyit" style="min-height:96px;border-radius:14px;background:linear-gradient(180deg,#3d454a,#30363a);border:1px solid rgba(255,255,255,.08);font-size:16px;font-weight:900;color:#e2e8f0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:6px;cursor:pointer;touch-action:manipulation"><span style="font-size:28px">&#x219E;</span><span>Nyit</span></button>
+                    <button class="joy-btn momentary" data-cmd="mindketto-nyit" style="min-height:96px;border-radius:12px;background:linear-gradient(180deg,#3d454a,#30363a);border:1px solid rgba(255,255,255,.08);font-size:10px;font-weight:900;color:#e2e8f0;padding:4px;cursor:pointer;touch-action:manipulation;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px"><span style="font-size:20px">&#x2194;</span><span>NYIT</span></button>
+                    <button class="joy-btn momentary" data-cmd="segedkeret-nyit" style="min-height:96px;border-radius:14px;background:linear-gradient(180deg,#3d454a,#30363a);border:1px solid rgba(255,255,255,.08);font-size:16px;font-weight:900;color:#e2e8f0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:6px;cursor:pointer;touch-action:manipulation"><span style="font-size:28px">&#x21A0;</span><span>Nyit</span></button>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 50px 1fr;gap:7px">
+                    <button class="joy-btn momentary" data-cmd="fokeret-csuk" style="min-height:96px;border-radius:14px;background:linear-gradient(180deg,#3d454a,#30363a);border:1px solid rgba(255,255,255,.08);font-size:16px;font-weight:900;color:#e2e8f0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:6px;cursor:pointer;touch-action:manipulation"><span style="font-size:28px">&#x2192;</span><span>Csuk</span></button>
+                    <button class="joy-btn momentary" data-cmd="mindketto-csuk" style="min-height:96px;border-radius:12px;background:linear-gradient(180deg,#3d454a,#30363a);border:1px solid rgba(255,255,255,.08);font-size:10px;font-weight:900;color:#e2e8f0;padding:4px;cursor:pointer;touch-action:manipulation;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px"><span style="font-size:20px">&#x21E5;</span><span>CSUK</span></button>
+                    <button class="joy-btn momentary" data-cmd="segedkeret-csuk" style="min-height:96px;border-radius:14px;background:linear-gradient(180deg,#3d454a,#30363a);border:1px solid rgba(255,255,255,.08);font-size:16px;font-weight:900;color:#e2e8f0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:6px;cursor:pointer;touch-action:manipulation"><span style="font-size:28px">&#x2190;</span><span>Csuk</span></button>
+                </div>
+            </div>
+            <div style="margin-top:10px;padding:12px;border-radius:16px;background:rgba(0,0,0,.14);border:1px solid rgba(255,255,255,.05)">
+                <h3 style="margin:0 0 8px;font-size:clamp(15px,4vw,20px)">Keretmagass&#xe1;g</h3>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                    <button class="joy-btn momentary" data-cmd="keretmagassag-le" style="min-height:88px;border-radius:14px;background:linear-gradient(180deg,#3d454a,#30363a);border:1px solid rgba(255,255,255,.08);font-size:16px;font-weight:900;color:#e2e8f0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:6px;cursor:pointer;touch-action:manipulation"><span style="font-size:28px">&#x25BC;</span><span>Le</span></button>
+                    <button class="joy-btn momentary" data-cmd="keretmagassag-fel" style="min-height:88px;border-radius:14px;background:linear-gradient(180deg,#3d454a,#30363a);border:1px solid rgba(255,255,255,.08);font-size:16px;font-weight:900;color:#e2e8f0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:6px;cursor:pointer;touch-action:manipulation"><span style="font-size:28px">&#x25B2;</span><span>Fel</span></button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="dash" class="panel">
     <div class="grid2">
         <div class="card">
             <h3>Joystick 1 (0x21)</h3>
@@ -281,6 +339,15 @@ input[type="range"] {
         <div style="margin-top:12px;display:flex;gap:8px;">
             <button onclick="saveMapping()">Save to Motor Driver</button>
             <button class="secondary" onclick="loadMapping()">Refresh</button>
+        </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+        <h3>Virtual Joystick Assignment</h3>
+        <p style="color:#94a3b8;font-size:0.85rem;margin:0 0 12px">Assign each virtual joystick function to an output pair. These buttons on the Joystick tab will directly drive the assigned outputs.</p>
+        <div id="joyAssignList"></div>
+        <div style="margin-top:12px;display:flex;gap:8px;">
+            <button onclick="saveJoyAssign()">Save</button>
+            <button class="secondary" onclick="fetchJoyAssign()">Refresh</button>
         </div>
     </div>
 </div>
@@ -381,7 +448,7 @@ input[type="range"] {
 <div id="btnout" class="panel">
     <div class="card">
         <h3>Button-to-Output Rules</h3>
-        <p style="color:#94a3b8;font-size:0.85rem;margin:0 0 12px">Map joystick buttons to PWM outputs. Add rules as needed (up to 16). Each output supports 2 buttons (e.g. one for max, one for min).</p>
+        <p style="color:#94a3b8;font-size:0.85rem;margin:0 0 12px">Map buttons to PWM outputs. Each output has a "+" (maxPWM) and "-" (minPWM) direction for bidirectional control.</p>
         <div id="btnOutList"></div>
     </div>
 </div>
@@ -429,6 +496,66 @@ function switchTab(name) {
     event.target.classList.add('active');
     document.getElementById(name).classList.add('active');
 }
+
+// ---- Joystick UI ----
+function joySwitchScreen(screenId, btn) {
+    document.querySelectorAll('.joy-screen').forEach(s => s.style.display = 'none');
+    document.getElementById(screenId).style.display = 'block';
+    document.querySelectorAll('.joy-mode-btn').forEach(b => {
+        b.style.background = 'transparent';
+        b.classList.remove('active');
+    });
+    btn.style.background = 'linear-gradient(180deg,#69d2c5,#369b90)';
+    btn.classList.add('active');
+}
+
+// Combined commands that trigger two functions
+const joyCombined = {
+    'mindketto-nyit': ['fokeret-nyit', 'segedkeret-nyit'],
+    'mindketto-csuk': ['fokeret-csuk', 'segedkeret-csuk']
+};
+
+function joySendCmd(cmd, active) {
+    // Handle combined commands
+    if (joyCombined[cmd]) {
+        joyCombined[cmd].forEach(c => joySendSingle(c, active));
+    } else {
+        joySendSingle(cmd, active);
+    }
+}
+
+function joySendSingle(cmd, active) {
+    fetch('/api/joycmd', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({cmd: cmd, active: active})
+    }).catch(e => console.error('joycmd err', e));
+}
+
+// Attach momentary button handlers
+document.querySelectorAll('.joy-btn.momentary').forEach(btn => {
+    let pressed = false;
+    const press = e => {
+        e.preventDefault();
+        if (pressed) return;
+        pressed = true;
+        btn.style.background = 'linear-gradient(180deg,#5bc7bb,#36978d)';
+        try { btn.setPointerCapture(e.pointerId); } catch(ex) {}
+        joySendCmd(btn.dataset.cmd, true);
+    };
+    const release = e => {
+        e.preventDefault();
+        if (!pressed) return;
+        pressed = false;
+        btn.style.background = 'linear-gradient(180deg,#3d454a,#30363a)';
+        joySendCmd(btn.dataset.cmd, false);
+    };
+    btn.addEventListener('pointerdown', press);
+    btn.addEventListener('pointerup', release);
+    btn.addEventListener('pointercancel', release);
+    btn.addEventListener('pointerleave', release);
+    btn.addEventListener('lostpointercapture', release);
+});
 
 function barHtml(id, label, value, max, color) {
     const pct = Math.min(100, Math.max(0, (value / max) * 100)).toFixed(1);
@@ -506,7 +633,7 @@ function renderDeadbandTuning() {
             for (const jl of gLabels.joysticks) {
                 if (jl.sourceAddress === p.src) {
                     const pos = jl.position || ('Joy' + (gLabels.joysticks.indexOf(jl)+1));
-                    const ax = jl.axisLabels[p.pot] || ('Axis' + (p.pot+1));
+                    const ax = jl.axes[p.pot] || ('Axis' + (p.pot+1));
                     return pos + ' ' + ax;
                 }
             }
@@ -680,14 +807,15 @@ function renderMapping() {
         const bidir = (a.flags & 2) ? 'checked' : '';
         const invert = (a.flags & 4) ? 'checked' : '';
         const curve = a.curveExp || 2;
-        const outNum = Math.floor(a.outputChannel / 2) + 1;
-        // Output dropdown with labels
+        const outNum = Math.floor(a.outputChannel / 2) + 1; // channel 0,1 = Out 1; channel 2,3 = Out 2; etc.
+        // Output dropdown with labels (8 pair-based outputs)
         let outOpts = '';
-        for (let o = 1; o <= 8; o++) {
-            const chIdx = (o - 1) * 2;
-            const ol = gLabels.outputs[chIdx];
-            const lbl = (ol && ol.label) ? ol.label : ('Out ' + o);
-            outOpts += '<option value="' + o + '" ' + (outNum==o?'selected':'') + '>' + lbl + '</option>';
+        for (let p = 0; p < 8; p++) {
+            const baseCh = p * 2; // pair base channel (even: 0,2,4,6,8,10,12,14)
+            const outNumOpt = p + 1; // Out 1 through Out 8
+            const ol = gLabels.outputs[baseCh];
+            const lbl = (ol && ol.label) ? ol.label : ('Out ' + outNumOpt);
+            outOpts += '<option value="' + (baseCh + 1) + '" ' + (outNum==outNumOpt?'selected':'') + '>' + lbl + '</option>';
         }
         const axisDropdown = buildAxisDropdown(a.sourceAddress, a.potIndex);
         const gateDropdown = buildGateDropdown(a.buttonGate);
@@ -717,7 +845,7 @@ function checkChannelConflicts() {
         const outEl = document.getElementById('a' + i + '_ch');
         if (!enEl || !outEl) continue;
         if (!enEl.checked) continue;  // Skip disabled axes
-        const outNum = parseInt(outEl.value);  // 1-8
+        const outNum = parseInt(outEl.value);  // 1-16
         // Track output usage (each output uses 2 channels: fwd+rev)
         if (!outputMap[outNum]) outputMap[outNum] = [];
         outputMap[outNum].push(i);
@@ -747,6 +875,72 @@ function checkChannelConflicts() {
     return warnings.length === 0;
 }
 
+// ---- Virtual Joystick Assignment ----
+const joyFuncNames = [
+    'Billent\xe9s (bal / jobb)',
+    'Bal sz\xe1;rny (fel / le)',
+    'Jobb sz\xe1;rny (fel / le)',
+    'Keretmagass\xe1;g (fel / le)',
+    'F\u0151keret (nyit / csuk)',
+    'Seg\xe9;dkeret (nyit / csuk)'
+];
+
+function renderJoyAssign() {
+    // Fetch current mappings from backend
+    fetch('/api/joymapping').then(r => r.json()).then(data => {
+        const m = data.mappings || [];
+        const labels = data.labels || [];
+        let h = '';
+        for (let pi = 0; pi < joyFuncNames.length; pi++) {
+            const posIdx = pi * 2; // even index = pos direction
+            const curCh = m[posIdx] ? m[posIdx].ch : 0;
+            // Build output dropdown (8 pair-based options with labels)
+            // "Out N" means pair starting at channel (N-1)*2
+            let opts = '<option value="255">Off</option>';
+            for (let p = 0; p < 8; p++) {
+                const baseCh = p * 2; // pair base channel (even: 0,2,4,6,8,10,12,14)
+                const outNum = p + 1; // Out 1 through Out 8
+                const ol = gLabels.outputs[baseCh];
+                const lbl = (ol && ol.label) ? ol.label : ('Out ' + outNum);
+                const sel = (curCh === baseCh) ? ' selected' : '';
+                opts += '<option value="' + baseCh + '"' + sel + '>' + lbl + '</option>';
+            }
+            h += '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #1e293b">';
+            h += '<span style="font-weight:600;font-size:0.85rem;min-width:180px">' + joyFuncNames[pi] + '</span>';
+            h += '<span style="color:#94a3b8;font-size:0.8rem">\u2192</span>';
+            h += '<select id="ja_' + pi + '" style="padding:4px 8px;background:#0f172a;border:1px solid #475569;border-radius:4px;color:#e2e8f0;font-size:0.8rem">' + opts + '</select>';
+            h += '</div>';
+        }
+        document.getElementById('joyAssignList').innerHTML = h;
+    }).catch(e => console.error('joyAssign load err', e));
+}
+
+async function saveJoyAssign() {
+    // Build 20-entry mapping array
+    const mappings = [];
+    for (let i = 0; i < 20; i++) mappings.push({ch: 255, inv: false});
+    for (let pi = 0; pi < joyFuncNames.length; pi++) {
+        const ch = parseInt(document.getElementById('ja_' + pi).value);
+        if (isNaN(ch) || ch > 255) continue;
+        const posIdx = pi * 2;
+        const negIdx = pi * 2 + 1;
+        mappings[posIdx] = {ch: ch, inv: false};
+        mappings[negIdx] = {ch: ch, inv: false};
+    }
+    try {
+        await fetch('/api/joymapping', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({mappings: mappings})
+        });
+        setStatus('Virtual joystick assignment saved!', 'success');
+    } catch(e) {
+        setStatus('Save failed', 'error');
+    }
+}
+
+function fetchJoyAssign() { renderJoyAssign(); }
+
 async function fetchState() {
     try {
         const r = await fetch('/api/state');
@@ -769,6 +963,7 @@ async function fetchConfig() {
         const r = await fetch('/api/config');
         gConfig = await r.json();
         renderMapping();
+        renderJoyAssign();
         renderDeadbandTuning();
     } catch(e) {}
 }
@@ -865,9 +1060,9 @@ async function saveMapping() {
         const pot = parseInt(srcVal[1]) || 0;
         const dbKey = src + '_' + pot;
         const db = dbMap[dbKey] || { min: 307, max: 717 };
-        // Convert output number (1-8) to channel (0,2,4,6,8,10,12,14)
-        const outNum = parseInt(document.getElementById('a' + i + '_ch').value);
-        const channel = (outNum - 1) * 2;
+        // Convert output pair number (1-8) to pair base channel (0,2,4,6,8,10,12,14)
+        const outVal = parseInt(document.getElementById('a' + i + '_ch').value);
+        const channel = Math.floor((outVal - 1) / 2) * 2; // value 1->ch0, 3->ch2, 5->ch4, etc.
         const gateVal = parseInt(document.getElementById('a' + i + '_bgate').value) || 0;
         axes.push({
             axisIdx: i,
@@ -1051,8 +1246,7 @@ setInterval(fetchState, 1000);
 fetchConfig().then(() => { fetchState(); fetchLabels(); });
 fetchCanOut();
 fetchTestState();
-fetchBtnRules();
-fetchCustomBtns();
+fetchCustomBtns().then(() => fetchBtnRules());
 setInterval(fetchTestState, 2000);
 
 // ---------------------------------------------------------------------------
@@ -1069,7 +1263,7 @@ function buildAxisDropdown(selectedSA, selectedPot) {
         if (!jl.sourceAddress) continue;
         const pos = jl.position || ('Joy' + (ji+1));
         for (let a = 0; a < 4; a++) {
-            const axLbl = jl.axisLabels[a] || ('Axis' + (a+1));
+            const axLbl = jl.axes[a] || ('Axis' + (a+1));
             const val = jl.sourceAddress + '_' + a;
             const sel = (jl.sourceAddress == selectedSA && a == selectedPot) ? 'selected' : '';
             opts += '<option value="' + val + '" ' + sel + '>' + pos + ' ' + axLbl + '</option>';
@@ -1125,27 +1319,28 @@ function renderLabels() {
     let h = '';
     const joyAddrs = [0x21, 0x22, 0x23, 0x24];
     for (let i = 0; i < 4; i++) {
-        const jl = gLabels.joysticks[i] || { sourceAddress: joyAddrs[i], position: '', axisLabels: ['','','',''] };
+        const jl = gLabels.joysticks[i] || { sourceAddress: joyAddrs[i], position: '', axes: ['','','',''] };
         let posOpts = '';
         for (const p of positions) posOpts += '<option value="' + p + '" ' + (jl.position==p?'selected':'') + '>' + p + '</option>';
         h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;padding:8px;background:#0f172a;border-radius:6px">';
         h += '<span style="min-width:60px;font-weight:600;color:#38bdf8">Joy ' + (i+1) + '</span>';
-        h += '<input type="number" id="jlSA' + i + '" value="' + (jl.sourceAddress || joyAddrs[i]) + '" min="32" max="239" style="width:70px" placeholder="SA">';
+        h += '<input type="text" id="jlSA' + i + '" value="0x' + (jl.sourceAddress || joyAddrs[i]).toString(16).toUpperCase() + '" style="width:70px" placeholder="0x21">';
         h += '<select id="jlPos' + i + '" style="width:80px">' + posOpts + '</select>';
         for (let a = 0; a < 4; a++) {
-            h += '<input type="text" id="jlAx' + i + '_' + a + '" value="' + (jl.axisLabels[a] || '') + '" placeholder="Axis ' + (a+1) + '" style="width:70px">';
+            h += '<input type="text" id="jlAx' + i + '_' + a + '" value="' + (jl.axes[a] || '') + '" placeholder="Axis ' + (a+1) + '" style="width:70px">';
         }
         h += '</div>';
     }
     document.getElementById('joyLabelsList').innerHTML = h;
 
-    // Output labels
+    // Output labels (8 pair-based outputs)
     let oh = '';
-    for (let i = 0; i < 16; i++) {
-        const ol = gLabels.outputs[i] || { channel: i, label: '' };
+    for (let p = 0; p < 8; p++) {
+        const idx = p * 2; // even indices: 0, 2, 4, 6, 8, 10, 12, 14
+        const ol = gLabels.outputs[idx] || { channel: idx, label: '' };
         oh += '<div style="display:inline-flex;gap:4px;align-items:center;margin:4px">';
-        oh += '<span style="min-width:40px;font-size:0.8rem;color:#94a3b8">Out ' + (i+1) + '</span>';
-        oh += '<input type="text" id="olLbl' + i + '" value="' + (ol.label || '') + '" placeholder="Name" style="width:80px">';
+        oh += '<span style="min-width:40px;font-size:0.8rem;color:#94a3b8">Out ' + (p+1) + '</span>';
+        oh += '<input type="text" id="olLbl' + idx + '" value="' + (ol.label || '') + '" placeholder="Name" style="width:80px">';
         oh += '</div>';
     }
     document.getElementById('outLabelsList').innerHTML = oh;
@@ -1157,6 +1352,7 @@ async function fetchLabels() {
         gLabels = await r.json();
         renderLabels();
         renderMapping();
+        renderJoyAssign();
     } catch(e) {}
 }
 
@@ -1167,19 +1363,22 @@ async function saveLabels() {
         for (let a = 0; a < 4; a++) {
             axes.push(document.getElementById('jlAx' + i + '_' + a).value);
         }
+        const saVal = document.getElementById('jlSA' + i).value.trim();
+        const sa = parseInt(saVal, 16) || 0; // always hex
         joyLabels.push({
             idx: i,
-            sourceAddress: parseInt(document.getElementById('jlSA' + i).value) || 0,
+            sourceAddress: sa,
             position: document.getElementById('jlPos' + i).value,
             axes: axes
         });
     }
     const outLabels = [];
-    for (let i = 0; i < 16; i++) {
+    for (let p = 0; p < 8; p++) {
+        const idx = p * 2; // even indices: 0, 2, 4, 6, 8, 10, 12, 14
         outLabels.push({
-            outIdx: i,
-            channel: i,
-            label: document.getElementById('olLbl' + i).value
+            outIdx: idx,
+            channel: idx,
+            label: document.getElementById('olLbl' + idx).value
         });
     }
     try {
@@ -1194,9 +1393,63 @@ async function saveLabels() {
 // ---------------------------------------------------------------------------
 let gBtnRules = [];
 
-function buildBtnSourceDropdown(selectedSA, selectedBtn) {
+
+function renderBtnOutRules() {
+    // Convert flat rules into paired structure (one pair per output)
+    const pairs = [];
+    for (let o = 0; o < 16; o++) {
+        pairs.push({ out: o, posBtn: '0_0', negBtn: '0_0', posPwm: 255, negPwm: 255 });
+    }
+    for (let i = 0; i < gBtnRules.length; i++) {
+        const r = gBtnRules[i];
+        if (!r || !r.enabled) continue;
+        const ch = r.outputChannel;
+        if (ch < 0 || ch >= 16) continue;
+        const srcVal = r.btnSourceSA + '_' + r.btnIndex;
+        if (r.btnMode === 0) {
+            pairs[ch].posBtn = srcVal;
+            pairs[ch].posPwm = r.pwmTarget;
+        } else {
+            pairs[ch].negBtn = srcVal;
+            pairs[ch].negPwm = r.pwmTarget;
+        }
+    }
+    let h = '';
+    for (let o = 0; o < 16; o++) {
+        const p = pairs[o];
+        const ol = gLabels.outputs[o];
+        const lbl = (ol && ol.label) ? ol.label : ('Out ' + (o+1));
+        const hasMapping = p.posBtn !== '0_0' || p.negBtn !== '0_0';
+        const border = hasMapping ? '1px solid #38bdf8' : '1px solid #334155';
+        h += '<div style="padding:10px;background:#0f172a;border-radius:8px;margin-bottom:8px;border:' + border + '">';
+        h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+        h += '<span style="color:#e2e8f0;font-weight:700;font-size:0.9rem">' + lbl + '</span>';
+        h += '<span style="color:#64748b;font-size:0.75rem">#' + (o+1) + '</span></div>';
+        h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:end">';
+        // Positive direction
+        h += '<div style="background:#1a2332;border-radius:6px;padding:8px">';
+        h += '<label style="display:block;color:#22c55e;font-size:0.75rem;font-weight:700;margin-bottom:4px">+ Max PWM</label>';
+        h += '<select id="br_pos_src_' + o + '" style="width:100%;margin-bottom:4px">' + buildBtnSourceDropdownStr(p.posBtn) + '</select>';
+        h += '<input type="number" id="br_pos_pwm_' + o + '" value="' + p.posPwm + '" min="0" max="255" placeholder="PWM" style="width:100%"></div>';
+        // Negative direction
+        h += '<div style="background:#1a2332;border-radius:6px;padding:8px">';
+        h += '<label style="display:block;color:#ef4444;font-size:0.75rem;font-weight:700;margin-bottom:4px">- Min PWM</label>';
+        h += '<select id="br_neg_src_' + o + '" style="width:100%;margin-bottom:4px">' + buildBtnSourceDropdownStr(p.negBtn) + '</select>';
+        h += '<input type="number" id="br_neg_pwm_' + o + '" value="' + p.negPwm + '" min="0" max="255" placeholder="PWM" style="width:100%"></div>';
+        h += '</div></div>';
+    }
+    h += '<div style="margin-top:8px;display:flex;gap:8px">';
+    h += '<button onclick="saveBtnRules()">Save</button>';
+    h += '<button class="secondary" onclick="fetchBtnRules()">Refresh</button>';
+    h += '</div>';
+    document.getElementById('btnOutList').innerHTML = h;
+}
+
+function buildBtnSourceDropdownStr(selectedVal) {
+    const parts = selectedVal.split('_');
+    const selSA = parseInt(parts[0]) || 0;
+    const selBtn = parseInt(parts[1]) || 0;
     let opts = '<option value="0_0">-- Off --</option>';
-    // Physical joystick buttons
     const joyAddrs = [0x21, 0x22, 0x23, 0x24];
     for (let ji = 0; ji < gLabels.joysticks.length; ji++) {
         const jl = gLabels.joysticks[ji];
@@ -1204,76 +1457,18 @@ function buildBtnSourceDropdown(selectedSA, selectedBtn) {
         const pos = jl.position || ('Joy' + (ji+1));
         for (let b = 0; b < 4; b++) {
             const val = sa + '_' + b;
-            const sel = (sa == selectedSA && b == selectedBtn) ? 'selected' : '';
+            const sel = (sa == selSA && b == selBtn) ? 'selected' : '';
             opts += '<option value="' + val + '" ' + sel + '>' + pos + ' Btn' + (b+1) + '</option>';
         }
     }
-    // Custom CAN buttons
     for (let ci = 0; ci < gCustomBtns.length; ci++) {
         const cb = gCustomBtns[ci];
         if (!cb.enabled) continue;
         const val = (0xF0 + ci) + '_0';
-        const sel = ((0xF0 + ci) == selectedSA && 0 == selectedBtn) ? 'selected' : '';
-        opts += '<option value="' + val + '" ' + sel + '>CAN: ' + (cb.name || 'Btn' + (ci+1)) + '</option>';
+        const sel = ((0xF0 + ci) == selSA && 0 == selBtn) ? 'selected' : '';
+        opts += '<option value="' + val + '" ' + sel + '>Virtual: ' + (cb.name || 'Btn' + (ci+1)) + '</option>';
     }
     return opts;
-}
-
-function renderBtnOutRules() {
-    // Filter to only enabled rules for display
-    let activeRules = [];
-    for (let i = 0; i < gBtnRules.length; i++) {
-        if (gBtnRules[i] && gBtnRules[i].enabled) activeRules.push({ ...gBtnRules[i], _idx: i });
-    }
-    let h = '';
-    for (let ai = 0; ai < activeRules.length; ai++) {
-        const r = activeRules[ai];
-        const i = r._idx;
-        // Output dropdown with labels
-        let outOpts = '';
-        for (let o = 0; o < 16; o++) {
-            const ol = gLabels.outputs[o];
-            const lbl = (ol && ol.label) ? ol.label : ('Out ' + (o+1));
-            outOpts += '<option value="' + o + '" ' + (r.outputChannel==o?'selected':'') + '>' + lbl + '</option>';
-        }
-        const btnSrcOpts = buildBtnSourceDropdown(r.btnSourceSA, r.btnIndex);
-        h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:end;padding:10px;background:#0f172a;border-radius:8px;margin-bottom:8px;border:1px solid #334155">';
-        h += '<div style="grid-column:1/-1;display:flex;justify-content:space-between;align-items:center"><span style="color:#94a3b8;font-weight:500;font-size:0.85rem">Rule #' + (ai+1) + '</span>';
-        h += '<button class="danger" onclick="removeBtnRule(' + i + ')" style="padding:3px 10px;font-size:0.75rem">Remove</button></div>';
-        h += '<div><label style="display:block;color:#94a3b8;font-size:0.75rem;margin-bottom:2px">Output</label>';
-        h += '<select id="br' + i + '_out" style="width:100%">' + outOpts + '</select></div>';
-        h += '<div><label style="display:block;color:#94a3b8;font-size:0.75rem;margin-bottom:2px">Button Source</label>';
-        h += '<select id="br' + i + '_src" style="width:100%">' + btnSrcOpts + '</select></div>';
-        h += '<div><label style="display:block;color:#94a3b8;font-size:0.75rem;margin-bottom:2px">Mode</label>';
-        h += '<select id="br' + i + '_mode" style="width:100%"><option value="0" ' + (r.btnMode==0?'selected':'') + '>Max PWM</option><option value="1" ' + (r.btnMode==1?'selected':'') + '>Min PWM</option></select></div>';
-        h += '<div><label style="display:block;color:#94a3b8;font-size:0.75rem;margin-bottom:2px">PWM Target</label>';
-        h += '<input type="number" id="br' + i + '_pwm" value="' + r.pwmTarget + '" min="0" max="255" style="width:100%"></div>';
-        h += '<input type="hidden" id="br' + i + '_en" value="1">';
-        h += '</div>';
-    }
-    const canAdd = activeRules.length < 16;
-    h += '<div style="margin-top:8px;display:flex;gap:8px">';
-    if (canAdd) h += '<button onclick="addBtnRule()">+ Add Rule</button>';
-    h += '<button class="secondary" onclick="saveBtnRules()">Save</button>';
-    h += '<button class="secondary" onclick="fetchBtnRules()">Refresh</button>';
-    h += '</div>';
-    document.getElementById('btnOutList').innerHTML = h;
-}
-
-function addBtnRule() {
-    // Find first disabled slot
-    for (let i = 0; i < 16; i++) {
-        if (!gBtnRules[i] || !gBtnRules[i].enabled) {
-            gBtnRules[i] = { enabled: true, outputChannel: 0, btnSourceSA: 0, btnIndex: 0, btnMode: 0, pwmTarget: 255 };
-            renderBtnOutRules();
-            return;
-        }
-    }
-}
-
-function removeBtnRule(idx) {
-    gBtnRules[idx] = { enabled: false, outputChannel: 0, btnSourceSA: 0, btnIndex: 0, btnMode: 0, pwmTarget: 255 };
-    renderBtnOutRules();
 }
 
 async function fetchBtnRules() {
@@ -1287,21 +1482,42 @@ async function fetchBtnRules() {
 
 async function saveBtnRules() {
     const rules = [];
-    for (let i = 0; i < 16; i++) {
-        const enEl = document.getElementById('br' + i + '_en');
-        const isEnabled = enEl ? (enEl.type === 'checkbox' ? enEl.checked : enEl.value === '1') : false;
-        const srcEl = document.getElementById('br' + i + '_src');
-        if (!srcEl) continue;
-        const srcVal = srcEl.value.split('_');
-        rules.push({
-            ruleIdx: i,
-            enabled: isEnabled,
-            outputChannel: parseInt(document.getElementById('br' + i + '_out').value) || 0,
-            btnSourceSA: parseInt(srcVal[0]) || 0,
-            btnIndex: parseInt(srcVal[1]) || 0,
-            btnMode: parseInt(document.getElementById('br' + i + '_mode').value) || 0,
-            pwmTarget: parseInt(document.getElementById('br' + i + '_pwm').value) || 255
-        });
+    let ruleIdx = 0;
+    for (let o = 0; o < 16; o++) {
+        // Positive direction (maxPWM)
+        const posSrcEl = document.getElementById('br_pos_src_' + o);
+        if (!posSrcEl) continue;
+        const posVal = posSrcEl.value.split('_');
+        const posSA = parseInt(posVal[0]) || 0;
+        const posBtn = parseInt(posVal[1]) || 0;
+        if (posSA !== 0) {
+            rules.push({
+                ruleIdx: ruleIdx++,
+                enabled: true,
+                outputChannel: o,
+                btnSourceSA: posSA,
+                btnIndex: posBtn,
+                btnMode: 0,
+                pwmTarget: parseInt(document.getElementById('br_pos_pwm_' + o).value) || 255
+            });
+        }
+        // Negative direction (minPWM)
+        const negSrcEl = document.getElementById('br_neg_src_' + o);
+        if (!negSrcEl) continue;
+        const negVal = negSrcEl.value.split('_');
+        const negSA = parseInt(negVal[0]) || 0;
+        const negBtn = parseInt(negVal[1]) || 0;
+        if (negSA !== 0) {
+            rules.push({
+                ruleIdx: ruleIdx++,
+                enabled: true,
+                outputChannel: o,
+                btnSourceSA: negSA,
+                btnIndex: negBtn,
+                btnMode: 1,
+                pwmTarget: parseInt(document.getElementById('br_neg_pwm_' + o).value) || 255
+            });
+        }
     }
     try {
         await fetch('/api/btnrules', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ rules: rules }) });
@@ -1361,6 +1577,8 @@ async function saveCustomBtns() {
         await fetch('/api/custombtns', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ buttons: buttons }) });
         setStatus('Custom buttons saved', 'success');
         await fetchCustomBtns();
+        // Re-render button outputs to pick up new virtual buttons
+        renderBtnOutRules();
     } catch(e) { setStatus('Failed to save', 'error'); }
 }
 </script>
@@ -1371,7 +1589,20 @@ async function saveCustomBtns() {
 // ---------------------------------------------------------------------------
 // HTTP Handlers
 // ---------------------------------------------------------------------------
-static void handleRoot() { server.send(200, "text/html", MAIN_HTML); }
+static void handleRoot() {
+  // Use chunked transfer to avoid heap allocation issues with large HTML
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "text/html", "");
+  // Send HTML in chunks
+  const char *ptr = MAIN_HTML;
+  while (*ptr) {
+    size_t len = strlen(ptr);
+    if (len > 2048)
+      len = 2048;
+    server.sendContent(ptr, len);
+    ptr += len;
+  }
+}
 
 static void handleState() {
   // Use chunked transfer to avoid massive heap allocation
@@ -1711,6 +1942,131 @@ static void handleMotorTestPost() {
 #endif
 }
 
+// ---------------------------------------------------------------------------
+// Joystick command handler: POST /api/joycmd
+// Body: {"cmd":"billentes-bal","active":true}
+// ---------------------------------------------------------------------------
+static void handleJoyCmdPost() {
+#if defined(ECU_TYPE_MOTOR_DRIVER)
+  if (server.hasArg("plain")) {
+    String body = server.arg("plain");
+    // Extract cmd string
+    int cmdIdx = body.indexOf("\"cmd\":\"");
+    if (cmdIdx >= 0) {
+      int start = cmdIdx + 7;
+      int end = body.indexOf("\"", start);
+      if (end > start) {
+        String cmd = body.substring(start, end);
+        bool active = body.indexOf("\"active\":true") >= 0;
+
+        // Map command name to function index
+        // Indices match joyPairs: posIdx=even, negIdx=odd
+        static const char *cmdNames[] = {"billentes-bal",     // 0 pair0 pos
+                                         "billentes-jobb",    // 1 pair0 neg
+                                         "bal-szarny-fel",    // 2 pair1 pos
+                                         "bal-szarny-le",     // 3 pair1 neg
+                                         "jobb-szarny-fel",   // 4 pair2 pos
+                                         "jobb-szarny-le",    // 5 pair2 neg
+                                         "keretmagassag-fel", // 6 pair3 pos
+                                         "keretmagassag-le",  // 7 pair3 neg
+                                         "fokeret-nyit",      // 8 pair4 pos
+                                         "fokeret-csuk",      // 9 pair4 neg
+                                         "segedkeret-nyit",   // 10 pair5 pos
+                                         "segedkeret-csuk",   // 11 pair5 neg
+                                         "mindketto-nyit",    // 12
+                                         "mindketto-csuk",    // 13
+                                         "master",            // 14
+                                         "szakaszok",         // 15
+                                         "auto",              // 16
+                                         "stop"};             // 17
+        const int numCmds = sizeof(cmdNames) / sizeof(cmdNames[0]);
+        for (int i = 0; i < numCmds; i++) {
+          if (cmd == cmdNames[i]) {
+            g_joyCmdActive[i] = active;
+            if (active)
+              g_lastJoyCmd = millis();
+            Serial.printf("[JoyCmd] %s = %s\n", cmd.c_str(),
+                          active ? "ON" : "OFF");
+            break;
+          }
+        }
+      }
+    }
+  }
+  server.send(200, "application/json", "{\"ok\":true}");
+#else
+  server.send(200, "application/json",
+              "{\"ok\":false,\"error\":\"not motor driver\"}");
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Joystick mapping: GET /api/joymapping
+// ---------------------------------------------------------------------------
+static void handleJoyMapGet() {
+#if defined(ECU_TYPE_MOTOR_DRIVER)
+  String json = "{\"mappings\":[";
+  for (int i = 0; i < MAX_JOY_FUNCTIONS; i++) {
+    if (i > 0)
+      json += ",";
+    json += "{\"ch\":" + String(g_joyMappings[i].outputChannel) +
+            ",\"inv\":" + String(g_joyMappings[i].invert ? "true" : "false") +
+            "}";
+  }
+  json += "],\"labels\":[";
+  for (int i = 0; i < MAX_OUTPUT_LABELS; i++) {
+    if (i > 0)
+      json += ",";
+    if (g_outLabels[i].label[0])
+      json += "\"" + String(g_outLabels[i].label) + "\"";
+    else
+      json += "\"Output " + String(i + 1) + "\"";
+  }
+  json += "]}";
+  server.send(200, "application/json", json);
+#else
+  server.send(200, "application/json", "{\"mappings\":[],\"labels\":[]}");
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Joystick mapping: POST /api/joymapping
+// Body: {"mappings":[{"ch":0,"inv":false},...]}
+// ---------------------------------------------------------------------------
+static void handleJoyMapPost() {
+#if defined(ECU_TYPE_MOTOR_DRIVER)
+  if (server.hasArg("plain")) {
+    String body = server.arg("plain");
+    int arrStart = body.indexOf("\"mappings\":[");
+    if (arrStart >= 0) {
+      arrStart = body.indexOf('[', arrStart);
+      int arrEnd = body.indexOf(']', arrStart);
+      if (arrStart >= 0 && arrEnd > arrStart) {
+        String arr = body.substring(arrStart + 1, arrEnd);
+        int pos = 0;
+        for (int i = 0; i < MAX_JOY_FUNCTIONS && pos < arr.length(); i++) {
+          int objStart = arr.indexOf('{', pos);
+          int objEnd = arr.indexOf('}', objStart);
+          if (objStart < 0 || objEnd < 0)
+            break;
+          String obj = arr.substring(objStart, objEnd + 1);
+          g_joyMappings[i].outputChannel =
+              parseJsonInt(obj, "ch", 0, obj.length());
+          g_joyMappings[i].invert = obj.indexOf("\"inv\":true") >= 0;
+          pos = objEnd + 1;
+        }
+        cfgMgr.saveJoystickMappings(g_joyMappings);
+        Serial.println("[JoyMap] Saved joystick mappings");
+      }
+    }
+  }
+  server.send(200, "application/json", "{\"ok\":true}");
+#else
+  server.send(200, "application/json",
+              "{\"ok\":false,\"error\":\"not motor driver\"}");
+#endif
+}
+
 static void handleUpdate() {
   HTTPUpload &upload = server.upload();
   if (upload.status == UPLOAD_FILE_START) {
@@ -1891,6 +2247,19 @@ static void handleBtnRulesPost() {
     return;
   }
   String body = server.arg("plain");
+  // Clear all rules first
+  for (int i = 0; i < MAX_BUTTON_OUTPUT_RULES; i++) {
+    ButtonOutputRule empty;
+    empty.enabled = false;
+    empty.outputChannel = 0;
+    empty.btnSourceSA = 0;
+    empty.btnIndex = 0;
+    empty.btnMode = 0;
+    empty.pwmTarget = 255;
+    g_btnOutputRules[i] = empty;
+    cfgMgr.saveButtonOutputRule(i, empty);
+  }
+  // Parse rules from JSON array
   for (int i = 0; i < MAX_BUTTON_OUTPUT_RULES; i++) {
     String key = "\"ruleIdx\":" + String(i);
     int idx = body.indexOf(key);
@@ -2050,6 +2419,9 @@ void ota_setup(const char *hostname) {
   server.on("/api/btnrules", HTTP_POST, handleBtnRulesPost);
   server.on("/api/custombtns", HTTP_GET, handleCustomBtnsGet);
   server.on("/api/custombtns", HTTP_POST, handleCustomBtnsPost);
+  server.on("/api/joycmd", HTTP_POST, handleJoyCmdPost);
+  server.on("/api/joymapping", HTTP_GET, handleJoyMapGet);
+  server.on("/api/joymapping", HTTP_POST, handleJoyMapPost);
   server.on("/update", HTTP_POST, handleUpdatePost, handleUpdate);
   server.begin();
   Serial.println("[OTA] Web server started on port 80");

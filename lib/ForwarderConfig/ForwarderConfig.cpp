@@ -109,6 +109,25 @@ bool ForwarderConfig::begin() {
   return _started;
 }
 
+bool ForwarderConfig::checkVersion() {
+  if (!_started)
+    return false;
+  uint16_t storedMagic = _prefs.getUShort("nvs_magic", 0);
+  uint16_t storedVersion = _prefs.getUShort("nvs_ver", 0);
+  if (storedMagic == NVS_MAGIC && storedVersion == NVS_VERSION) {
+    return true; // Version matches
+  }
+  // Version mismatch or first boot - clear NVS and write new version
+  Serial.printf(
+      "[Config] NVS version mismatch (got 0x%04X v%d, expected 0x%04X "
+      "v%d) - clearing NVS\n",
+      storedMagic, storedVersion, NVS_MAGIC, NVS_VERSION);
+  _prefs.clear();
+  _prefs.putUShort("nvs_magic", NVS_MAGIC);
+  _prefs.putUShort("nvs_ver", NVS_VERSION);
+  return false; // Indicates NVS was cleared
+}
+
 uint8_t ForwarderConfig::getForcedAddress(uint8_t defaultAddr) {
   if (!_started)
     return defaultAddr;
@@ -135,6 +154,11 @@ bool ForwarderConfig::loadMotorConfig(MotorConfig &cfg) {
   cfg.pcaCount = _prefs.getUChar("pca_count", MAX_PCA_COUNT);
   if (cfg.pcaCount < 1 || cfg.pcaCount > MAX_PCA_COUNT)
     cfg.pcaCount = MAX_PCA_COUNT;
+
+  // Ethernet subnet config
+  cfg.ethIP0 = _prefs.getUChar("eth_ip0", 192);
+  cfg.ethIP1 = _prefs.getUChar("eth_ip1", 168);
+  cfg.ethIP2 = _prefs.getUChar("eth_ip2", 5);
 
   for (int i = 0; i < MAX_AXIS_COUNT; i++) {
     char key[12];
@@ -165,6 +189,9 @@ bool ForwarderConfig::saveMotorConfig(const MotorConfig &cfg) {
   if (!_started)
     return false;
   _prefs.putUChar("pca_count", cfg.pcaCount);
+  _prefs.putUChar("eth_ip0", cfg.ethIP0);
+  _prefs.putUChar("eth_ip1", cfg.ethIP1);
+  _prefs.putUChar("eth_ip2", cfg.ethIP2);
   for (int i = 0; i < MAX_AXIS_COUNT; i++) {
     char key[12];
     snprintf(key, sizeof(key), "axis_%d", i);
@@ -421,6 +448,9 @@ bool ForwarderConfig::saveCustomCanButton(uint8_t index,
 
 void ForwarderConfig::loadDefaults(MotorConfig &cfg) {
   cfg.pcaCount = MAX_PCA_COUNT;
+  cfg.ethIP0 = 192;
+  cfg.ethIP1 = 168;
+  cfg.ethIP2 = 5;
   for (int i = 0; i < MAX_AXIS_COUNT; i++) {
     cfg.axes[i].flags = 0;
     cfg.axes[i].sourceAddress = 0;
@@ -432,4 +462,36 @@ void ForwarderConfig::loadDefaults(MotorConfig &cfg) {
     cfg.axes[i].pwmMax = 128;
     cfg.axes[i].buttonGate = BUTTON_GATE_NONE;
   }
+}
+
+bool ForwarderConfig::loadJoystickMappings(
+    JoystickOutputMapping mappings[MAX_JOY_FUNCTIONS]) {
+  if (!_started)
+    return false;
+  _prefs.begin("joymap", true);
+  for (int i = 0; i < MAX_JOY_FUNCTIONS; i++) {
+    char key[8];
+    snprintf(key, sizeof(key), "jm%d", i);
+    mappings[i].outputChannel = _prefs.getUChar(key, 0);
+    snprintf(key, sizeof(key), "ji%d", i);
+    mappings[i].invert = _prefs.getUChar(key, 0) != 0;
+  }
+  _prefs.end();
+  return true;
+}
+
+bool ForwarderConfig::saveJoystickMappings(
+    const JoystickOutputMapping mappings[MAX_JOY_FUNCTIONS]) {
+  if (!_started)
+    return false;
+  _prefs.begin("joymap", false);
+  for (int i = 0; i < MAX_JOY_FUNCTIONS; i++) {
+    char key[8];
+    snprintf(key, sizeof(key), "jm%d", i);
+    _prefs.putUChar(key, mappings[i].outputChannel);
+    snprintf(key, sizeof(key), "ji%d", i);
+    _prefs.putUChar(key, mappings[i].invert ? 1 : 0);
+  }
+  _prefs.end();
+  return true;
 }

@@ -4,6 +4,13 @@
 #include <Preferences.h>
 
 // ---------------------------------------------------------------------------
+// NVS versioning - increment when data structures change incompatibly
+// If magic/version don't match, NVS is cleared and defaults are used
+// ---------------------------------------------------------------------------
+#define NVS_MAGIC 0xA0F1 // Magic identifier for valid NVS data
+#define NVS_VERSION 1    // Increment when structures change
+
+// ---------------------------------------------------------------------------
 // Axis configuration for joystick-to-solenoid mapping
 // ---------------------------------------------------------------------------
 // Packed into 8 bytes for CAN transport:
@@ -32,8 +39,32 @@
 #define MAX_CAN_OUTPUT_RULES 4
 #define MAX_JOYSTICK_LABELS 4
 #define MAX_OUTPUT_LABELS 16
-#define MAX_BUTTON_OUTPUT_RULES 16
+#define MAX_BUTTON_OUTPUT_RULES 32
 #define MAX_CUSTOM_CAN_BUTTONS 8
+#define MAX_JOY_FUNCTIONS 20
+
+// Joystick function names for the Mapping tab
+static const char *JOY_FUNCTION_NAMES[] = {
+    "billentes-bal",     // tilt left
+    "billentes-jobb",    // tilt right
+    "bal-szarny-fel",    // left wing up
+    "bal-szarny-le",     // left wing down
+    "jobb-szarny-fel",   // right wing up
+    "jobb-szarny-le",    // right wing down
+    "keretmagassag-fel", // frame height up (main screen)
+    "keretmagassag-le",  // frame height down (main screen)
+    "fokeret-nyit",      // main frame open
+    "fokeret-csuk",      // main frame close
+    "segedkeret-nyit",   // aux frame open
+    "segedkeret-csuk",   // aux frame close
+    "mindketto-nyit",    // both open (combined)
+    "mindketto-csuk",    // both close (combined)
+    "keretmagassag-fel", // frame height up
+    "keretmagassag-le",  // frame height down
+    "master",
+    "szakaszok",
+    "auto",
+    "stop"};
 
 // CAN-triggered GPIO output rule
 struct CanOutputRule {
@@ -73,6 +104,18 @@ struct AxisConfig {
 struct MotorConfig {
   AxisConfig axes[MAX_AXIS_COUNT];
   uint8_t pcaCount = MAX_PCA_COUNT; // 1 or 2
+  // Ethernet subnet config (for WT5500)
+  uint8_t ethIP0 = 192;
+  uint8_t ethIP1 = 168;
+  uint8_t ethIP2 = 5;
+};
+
+// ---------------------------------------------------------------------------
+// Joystick-to-output mapping: map named functions to PWM output channels
+// ---------------------------------------------------------------------------
+struct JoystickOutputMapping {
+  uint8_t outputChannel; // 0-15, which PCA output to drive
+  bool invert;           // swap maxPWM/minPWM direction
 };
 
 // ---------------------------------------------------------------------------
@@ -123,6 +166,7 @@ public:
   ForwarderConfig(const char *ns = "fwdrcfg");
 
   bool begin();
+  bool checkVersion(); // Returns true if NVS version matches, clears NVS if not
 
   // Address override (stored in NVS)
   uint8_t getForcedAddress(uint8_t defaultAddr);
@@ -151,6 +195,11 @@ public:
   // Custom CAN buttons
   bool loadCustomCanButtons(CustomCanButton buttons[MAX_CUSTOM_CAN_BUTTONS]);
   bool saveCustomCanButton(uint8_t index, const CustomCanButton &button);
+
+  // Joystick output mappings
+  bool loadJoystickMappings(JoystickOutputMapping mappings[MAX_JOY_FUNCTIONS]);
+  bool
+  saveJoystickMappings(const JoystickOutputMapping mappings[MAX_JOY_FUNCTIONS]);
 
   // Factory defaults
   void loadDefaults(MotorConfig &cfg);
