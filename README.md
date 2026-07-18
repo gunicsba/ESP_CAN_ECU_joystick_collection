@@ -9,7 +9,7 @@ Replaces a failed factory controller with a robust, open-source solution using J
 
 | ECU | Address | Role |
 |-----|---------|------|
-| Motor Driver | `0x20` | Controls 8 solenoids via PCA9685 PWM driver |
+| Motor Driver | `0x20` | Controls 16 solenoids via 2x PCA9685 PWM drivers |
 | Joystick 1 | `0x21` | Reads 3 pots + 2 buttons, publishes on CAN |
 | Joystick 2 | `0x22` | Reads 3 pots + 2 buttons, publishes on CAN |
 
@@ -23,10 +23,62 @@ Replaces a failed factory controller with a robust, open-source solution using J
 - **Joystick inputs**: 3x potentiometers (GPIO32, 33, 34) + 2x buttons (GPIO12, 5)
 - **Status LED**: WS2812B on GPIO18
 
-### Motor Driver ECU
+### Motor Driver ECU (ESP32-S3)
 
-- **MCU**: LilyGO T-CAN board (ESP32 with built-in CAN transceiver)
-- **Motor driver PCB**: PCA9685 I2C PWM controller with 8 MOSFET outputs
+- **MCU**: ESP32-S3 with USB-CDC serial
+- **CAN transceiver**: TJA1050 on GPIO16 (TX), GPIO17 (RX)
+- **Ethernet**: WT5500 module (SPI) for wired network connectivity
+  - Static IP: 192.168.5.40 (configurable via web UI)
+- **Motor driver PCB**: 2x PCA9685 I2C PWM controllers with 16 MOSFET outputs
+- **Output active indicator**: GPIO4 goes HIGH when any output is active
+- **Status LED**: WS2812B RGB LED
+
+### Web Configuration Interface
+
+The Motor Driver ECU includes a comprehensive web UI accessible via Ethernet:
+
+**Motor Mapping Tab (Axis Configuration)**
+- Configure up to 16 joystick axes with source address, pot index, and output channel
+- Set PWM min/max values (0-255 scale)
+- Enable bidirectional mode (uses channel pair for forward/reverse)
+- Invert flag swaps forward/reverse channels
+- Button gate: axis only active when specific button is pressed
+- Exponential curve adjustment (1.0x to 3.0x)
+
+**Virtual Joystick Assignment**
+- Assign web UI joystick buttons to output pairs
+- 8 pair-based outputs (Out 1 = ch0+ch1, Out 2 = ch2+ch3, etc.)
+- Respects axis PWM Max settings from Motor Mapping
+- Respects axis Invert flag for direction swapping
+
+**Labels Tab**
+- Custom labels for 8 pair-based outputs (Out 1 through Out 8)
+- Joystick position labels (left, right, center, rear)
+- Joystick source addresses (hexadecimal format)
+- Custom axis labels (X, Y, Z, W)
+
+**Dashboard Tab**
+- Real-time output monitoring
+- Joystick axis visualization with deadband indicators
+
+**Motor Test Tab**
+- Manual PWM output control for testing
+- 10-second safety timeout
+
+### NVS Versioning and OTA Safety
+
+The firmware includes NVS versioning to prevent corruption during OTA updates:
+- Magic number (0xA0F1) and version stored in NVS
+- On boot, version is checked; if mismatch, NVS is cleared and defaults applied
+- Increment `NVS_VERSION` in `ForwarderConfig.h` when configuration structures change
+
+### Default Configuration (After NVS Clear)
+
+When NVS is cleared (first boot or version mismatch):
+- 8 axes enabled (0-7) with pair-based channels (0, 2, 4, 6, 8, 10, 12, 14)
+- PWM Min = 20, PWM Max = 255, Bidirectional enabled
+- Joystick labels: Joy1=left, Joy2=right, Joy3=center, Joy4=rear
+- Joystick addresses: 0x21, 0x22, 0x23, 0x24
 
 ## CAN Protocol
 
@@ -105,8 +157,8 @@ Byte 6-7: reserved (0)
 ### Motor Driver Messages
 
 | PF | PS | Direction | Description | Payload |
-|----|----|-----------|-------------|---------|
-| `0x21` | DA | Any -> Motor | Solenoid Command | `duty0..duty7` (8 bytes, 0-255 each) |
+|----|----|-----------|-------------|--------|
+| `0x21` | DA | Any -> Motor | Solenoid Command | `duty0..duty15` (16 bytes, 0-255 each) |
 
 ## Pinout (T-CAN485 Joystick)
 
@@ -122,6 +174,23 @@ Byte 6-7: reserved (0)
 | Pot 3 | 34 | Joystick Z (analog input) |
 | Button 1 | 12 | Active low, internal pullup |
 | Button 2 | 5 | Active low, internal pullup |
+
+## Pinout (Motor Driver ECU - ESP32-S3)
+
+| Signal | GPIO | Notes |
+|--------|------|-------|
+| CAN TX | 16 | TJA1050 transceiver |
+| CAN RX | 17 | TJA1050 transceiver |
+| I2C SDA | 8 | PCA9685 controllers |
+| I2C SCL | 9 | PCA9685 controllers |
+| Output Active | 4 | HIGH when any output is active |
+| WS2812 | 38 | Status LED |
+| WT5500 MISO | 13 | Ethernet SPI |
+| WT5500 MOSI | 11 | Ethernet SPI |
+| WT5500 SCLK | 12 | Ethernet SPI |
+| WT5500 CS | 10 | Ethernet SPI |
+| WT5500 RST | 7 | Ethernet reset |
+| WT5500 INT | 5 | Ethernet interrupt |
 
 ## Joystick ECU LED Status Indicators
 
@@ -160,8 +229,21 @@ The WS2812B RGB LED on the joystick ECU provides visual status feedback:
 
 Install [PlatformIO](https://platformio.org/) (VS Code extension or CLI).
 
+### Finding COM Ports
+
+To list available COM ports on Windows, open Command Prompt and run:
+```cmd
+mode
+```
+This will show all available serial ports (e.g., COM7).
+
+### Building
+
 ```bash
-# Build motor driver
+# Build motor driver (ESP32-S3 with OTA web UI)
+pio run -e motor_driver_s3_ota
+
+# Build motor driver (legacy ESP32)
 pio run -e motor_driver
 
 # Build joystick 1
@@ -169,17 +251,54 @@ pio run -e joystick1
 
 # Build joystick 2
 pio run -e joystick2
+```
 
-# Flash motor driver
-pio run -e motor_driver --target upload
+### Flashing with PlatformIO
+
+```bash
+# Flash motor driver S3 (USB-CDC)
+pio run -e motor_driver_s3_ota --target upload
 
 # Flash joystick 1
 pio run -e joystick1 --target upload
 ```
 
+### Flashing with esptool
+
+For direct flashing without PlatformIO, use the included `esptool.exe`:
+
+```bash
+# Flash motor driver S3 firmware
+esptool.exe --chip esp32s3 --port COM7 --baud 921600 write_flash -z 0x0 .pio\build\motor_driver_s3_ota\firmware.bin
+```
+
+**Parameters:**
+- `--chip esp32s3` - Target chip type
+- `--port COM7` - Serial port (use `mode` command to find available ports)
+- `--baud 921600` - Upload speed (use `460800` if connection is unstable)
+- `write_flash -z 0x0` - Write compressed at flash address 0x0
+
+**If the board is crash-looping** (e.g., Guru Meditation Error), you must manually enter download mode:
+1. Hold the BOOT button
+2. Press and release RESET while holding BOOT
+3. Release BOOT
+4. Run the esptool command above
+
 ### OTA Updates
 
-OTA builds include a Wi-Fi access point and web upload interface.
+The Motor Driver ECU supports OTA updates via the web interface:
+
+1. Access the web UI at http://192.168.5.40 (or configured IP) via AgIo set subnet PGN
+2. Navigate to the "OTA Update" tab
+3. Upload the `firmware.bin` file from `.pio/build/motor_driver_s3_ota/`
+
+The firmware includes NVS versioning - if the NVS version doesn't match, configuration is reset to defaults.
+
+**Note:** Always run `clang-format` on modified C++ files before building.
+
+### Wi-Fi OTA (Joystick ECUs)
+
+Joystick ECUs can include Wi-Fi OTA support:
 
 ```bash
 # Build & upload joystick 1 with OTA support
@@ -192,12 +311,6 @@ After booting:
 3. Open http://192.168.4.1
 4. Upload a `.bin` firmware file
 
-To produce a `.bin` for OTA:
-```bash
-pio run -e joystick1
-# The .bin will be in .pio/build/joystick1/firmware.bin
-```
-
 ## Safety Features
 
 - **Address claiming**: J1939-style startup arbitration ensures no address collisions
@@ -208,15 +321,20 @@ pio run -e joystick1
 ## Project Structure
 
 ```
-forwarderke/
+ESP_CAN_ECU_joystick_collection/
 ├── lib/
-│   └── ForwarderCAN/         # Shared CAN/J1939 library
+│   ├── ForwarderCAN/         # Shared CAN/J1939 library
+│   └── ForwarderConfig/      # NVS configuration management with versioning
 ├── src/
 │   ├── main.cpp              # Entry point (build flag selects ECU type)
-│   ├── ecu_motor_driver.cpp  # Motor driver logic
+│   ├── ecu_motor_driver.cpp  # Motor driver logic (ESP32-S3)
 │   ├── ecu_joystick.cpp      # Joystick logic
-│   ├── ota_webserver.cpp     # Optional Wi-Fi OTA web UI
+│   ├── ota_webserver.cpp     # Web UI and OTA update server
+│   ├── can_output.cpp        # CAN output rules processing
+│   ├── web_state.cpp         # Real-time state management
 │   └── *.h                   # Headers
+├── 3D/                       # 3D models for joystick enclosure
+├── img/                      # Documentation images
 ├── platformio.ini            # Build environments
 └── README.md                 # This file
 ```
