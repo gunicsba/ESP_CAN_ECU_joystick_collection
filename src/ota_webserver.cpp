@@ -978,9 +978,16 @@ async function saveJoyAssign() {
 
 function fetchJoyAssign() { renderJoyAssign(); }
 
+let stateSeq = 0; // Sequence counter for state requests
 async function fetchState() {
+    const mySeq = ++stateSeq;
     try {
-        const r = await fetch('/api/state');
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 500); // 500ms timeout
+        const r = await fetch('/api/state', { signal: controller.signal });
+        clearTimeout(timeoutId);
+        // Ignore if a newer request has been made
+        if (mySeq !== stateSeq) return;
         gState = await r.json();
         document.getElementById('localAddr').textContent = 'Addr: 0x' + gState.localAddr.toString(16).toUpperCase().padStart(2,'0');
         document.getElementById('busStatus').textContent = 'Bus: ' + (gState.online ? 'Online' : 'Offline');
@@ -992,7 +999,9 @@ async function fetchState() {
         renderDeadbandTuning();
         renderSol();
         renderModules();
-    } catch(e) {}
+    } catch(e) {
+        // Timeout or network error - ignore silently
+    }
 }
 
 async function fetchConfig() {
@@ -1264,9 +1273,16 @@ async function sendTestCmd() {
     } catch(e) { setStatus('Test command failed', 'error'); }
 }
 
+let testSeq = 0; // Sequence counter for test state requests
 async function fetchTestState() {
+    const mySeq = ++testSeq;
     try {
-        const r = await fetch('/api/motortest');
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 500); // 500ms timeout
+        const r = await fetch('/api/motortest', { signal: controller.signal });
+        clearTimeout(timeoutId);
+        // Ignore if a newer request has been made
+        if (mySeq !== testSeq) return;
         const d = await r.json();
         if (gTestMode !== d.enabled) {
             gTestMode = d.enabled;
@@ -1279,10 +1295,12 @@ async function fetchTestState() {
             document.getElementById('testTimeout').textContent = gTestMode ? 'Waiting for command...' : '';
         }
         renderTestOutputs();
-    } catch(e) {}
+    } catch(e) {
+        // Timeout or network error - ignore silently
+    }
 }
 
-setInterval(fetchState, 1000);
+setInterval(fetchState, 2000); // 0.5Hz polling with timeout protection
 fetchConfig().then(() => { fetchState(); fetchLabels(); });
 fetchCanOut();
 fetchTestState();
@@ -2424,70 +2442,6 @@ static void scanHeartbeats() {
 // ---------------------------------------------------------------------------
 // Dedicated OTA page - minimal page with no background polling
 // ---------------------------------------------------------------------------
-static void handleOtaPage() {
-  String html = R"rawliteral(
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Firmware Update</title>
-  <style>
-    body { font-family: sans-serif; background: #0f172a; color: #e2e8f0; padding: 20px; }
-    .card { background: #1e293b; border-radius: 12px; padding: 20px; max-width: 400px; margin: 0 auto; }
-    h3 { margin: 0 0 16px; }
-    input[type=file] { width: 100%; padding: 8px; background: #0f172a; border: 1px solid #475569; border-radius: 6px; color: #e2e8f0; }
-    button { margin-top: 12px; width: 100%; padding: 10px; background: #3b82f6; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; }
-    button:hover { background: #2563eb; }
-    .bar-track { margin-top: 12px; height: 8px; background: #334155; border-radius: 4px; overflow: hidden; }
-    .bar-fill { height: 100%; background: #22c55e; width: 0%; transition: width 0.3s; }
-    .status { margin-top: 12px; padding: 8px; border-radius: 6px; display: none; }
-    .success { background: #166534; display: block; }
-    .error { background: #991b1b; display: block; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h3>Firmware Update</h3>
-    <label style="display:block;margin:8px 0 4px;color:#94a3b8">Select firmware (.bin)</label>
-    <input type="file" id="firmware" accept=".bin">
-    <button onclick="startUpload()">Update Firmware</button>
-    <div class="bar-track"><div class="bar-fill" id="prog"></div></div>
-    <div id="status" class="status"></div>
-  </div>
-  <script>
-    function setStatus(msg, type) {
-      const el = document.getElementById('status');
-      el.textContent = msg;
-      el.className = 'status ' + type;
-    }
-    function startUpload() {
-      const file = document.getElementById('firmware').files[0];
-      if (!file) { setStatus('Please select a file', 'error'); return; }
-      const prog = document.getElementById('prog');
-      const xhr = new XMLHttpRequest();
-      xhr.timeout = 120000;
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) prog.style.width = (e.loaded / e.total * 100).toFixed(1) + '%';
-      };
-      xhr.onload = () => {
-        if (xhr.status === 200) {
-          setStatus('Update successful! Rebooting...', 'success');
-          setTimeout(() => window.close(), 5000);
-        } else {
-          setStatus('Update failed: ' + xhr.responseText, 'error');
-        }
-      };
-      xhr.onerror = () => setStatus('Network error', 'error');
-      xhr.ontimeout = () => setStatus('Upload timeout', 'error');
-      xhr.open('POST', '/update');
-      xhr.send(file);
-    }
-  </script>
-</body>
-</html>
-)rawliteral";
-  server.send(200, "text/html", html);
-}
-
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -2520,7 +2474,6 @@ void ota_setup(const char *hostname) {
                 ip.toString().c_str());
 
   server.on("/", HTTP_GET, handleRoot);
-  server.on("/ota", HTTP_GET, handleOtaPage);
   server.on("/api/state", HTTP_GET, handleState);
   server.on("/api/config", HTTP_GET, handleConfigGet);
   server.on("/api/config", HTTP_POST, handleConfigPost);

@@ -959,94 +959,103 @@ void ecu_loop() {
   yield();
   g_can->loop();
   processCAN();
-  processUDP();
-  yield();
-  updateAxes();
-  updateButtonOutputs();
-  processJoystickCommands();
-  // Update output active indicator pin (GPIO5)
-  {
-    bool anyActive = false;
-    for (int i = 0; i < MAX_AXIS_COUNT; i++) {
-      if (g_solenoidValues[i] > 0) {
-        anyActive = true;
-        break;
+  // Skip most processing during OTA to maximize network resources
+#if defined(ENABLE_OTA_WEBSERVER)
+  if (!ota_is_active()) {
+#endif
+    processUDP();
+    yield();
+    updateAxes();
+    updateButtonOutputs();
+    processJoystickCommands();
+    // Update output active indicator pin (GPIO5)
+    {
+      bool anyActive = false;
+      for (int i = 0; i < MAX_AXIS_COUNT; i++) {
+        if (g_solenoidValues[i] > 0) {
+          anyActive = true;
+          break;
+        }
       }
-    }
-    digitalWrite(OUTPUT_ACTIVE_PIN, anyActive ? HIGH : LOW);
-  }
-  yield();
-
-  // Self-loopback test: send a test frame every 3s
-  if (now - lastSelfTest >= 3000) {
-    lastSelfTest = now;
-    uint8_t testData[8] = {0xAA, 0xBB, (uint8_t)(selfTestCount & 0xFF), 0, 0, 0,
-                           0,    0};
-    selfTestCount++;
-    bool sent = g_can->sendBroadcast(0xEF, testData, 8, 6); // PGN 0xEF00 test
-    Serial.printf("[SelfTest #%lu] sent=%d (TX_pin=IO%d RX_pin=IO%d)\n",
-                  selfTestCount, sent ? 1 : 0, CAN_TX_PIN, CAN_RX_PIN);
-    if (!sent) {
-      Serial.printf("[SelfTest] TX FAILED - check CAN bus\n");
+      digitalWrite(OUTPUT_ACTIVE_PIN, anyActive ? HIGH : LOW);
     }
     yield();
-  }
 
-  // Periodic CAN bus status
-  if (now - lastStatusPrint >= 5000) {
-    lastStatusPrint = now;
-    Serial.printf("[CAN Status] online=%d tx=%lu rx=%lu err=%lu\n",
-                  g_can->isOnline() ? 1 : 0, g_can->getTxCount(),
-                  g_can->getRxCount(), g_can->getErrorCount());
-  }
-  if (now - lastSolenoidUpdate > SAFETY_TIMEOUT_MS) {
-    if (lastSolenoidUpdate != 0) {
-      Serial.printf(
-          "[SAFETY] Timeout %lums since last update, all outputs OFF\n",
-          (unsigned long)(now - lastSolenoidUpdate));
-      allOff("safety");
-      lastSolenoidUpdate = 0; // Prevent re-firing until fresh CAN data arrives
-    }
-  }
-  if (blinkFast && (now - blinkTimer > 100)) {
-    blinkFast = false;
-  }
-  if (now - lastHeartbeat >= 1000) {
-    lastHeartbeat = now;
-    if (g_can->isOnline()) {
-      sendHeartbeat();
-    }
-  }
-  // Broadcast PCA9685 output values when PWM changes (rate-limited to 20Hz max)
-  if (g_outputDirty && (now - lastOutputBroadcast >= 50)) {
-    lastOutputBroadcast = now;
-    g_outputDirty = false;
-    // Message 1: axes 0-3 (channels 0-7)
-    {
-      uint8_t data[8];
-      for (int i = 0; i < 4; i++) {
-        int16_t val = (int16_t)g_solenoidValues[i * 2] -
-                      (int16_t)g_solenoidValues[i * 2 + 1];
-        data[i * 2] = (uint8_t)(val & 0xFF);
-        data[i * 2 + 1] = (uint8_t)((val >> 8) & 0xFF);
+    // Self-loopback test: send a test frame every 3s
+    if (now - lastSelfTest >= 3000) {
+      lastSelfTest = now;
+      uint8_t testData[8] = {
+          0xAA, 0xBB, (uint8_t)(selfTestCount & 0xFF), 0, 0, 0, 0, 0};
+      selfTestCount++;
+      bool sent = g_can->sendBroadcast(0xEF, testData, 8, 6); // PGN 0xEF00 test
+      Serial.printf("[SelfTest #%lu] sent=%d (TX_pin=IO%d RX_pin=IO%d)\n",
+                    selfTestCount, sent ? 1 : 0, CAN_TX_PIN, CAN_RX_PIN);
+      if (!sent) {
+        Serial.printf("[SelfTest] TX FAILED - check CAN bus\n");
       }
-      g_can->sendBroadcast(PF_MOTOR_OUTPUT1, data, 8, 6);
+      yield();
     }
-    // Message 2: axes 4-7 (channels 8-15)
-    {
-      uint8_t data[8];
-      for (int i = 0; i < 4; i++) {
-        int idx = 4 + i;
-        int16_t val = (int16_t)g_solenoidValues[idx * 2] -
-                      (int16_t)g_solenoidValues[idx * 2 + 1];
-        data[i * 2] = (uint8_t)(val & 0xFF);
-        data[i * 2 + 1] = (uint8_t)((val >> 8) & 0xFF);
+
+    // Periodic CAN bus status
+    if (now - lastStatusPrint >= 5000) {
+      lastStatusPrint = now;
+      Serial.printf("[CAN Status] online=%d tx=%lu rx=%lu err=%lu\n",
+                    g_can->isOnline() ? 1 : 0, g_can->getTxCount(),
+                    g_can->getRxCount(), g_can->getErrorCount());
+    }
+    if (now - lastSolenoidUpdate > SAFETY_TIMEOUT_MS) {
+      if (lastSolenoidUpdate != 0) {
+        Serial.printf(
+            "[SAFETY] Timeout %lums since last update, all outputs OFF\n",
+            (unsigned long)(now - lastSolenoidUpdate));
+        allOff("safety");
+        lastSolenoidUpdate =
+            0; // Prevent re-firing until fresh CAN data arrives
       }
-      g_can->sendBroadcast(PF_MOTOR_OUTPUT2, data, 8, 6);
     }
+    if (blinkFast && (now - blinkTimer > 100)) {
+      blinkFast = false;
+    }
+    if (now - lastHeartbeat >= 1000) {
+      lastHeartbeat = now;
+      if (g_can->isOnline()) {
+        sendHeartbeat();
+      }
+    }
+    // Broadcast PCA9685 output values when PWM changes (rate-limited to 20Hz
+    // max)
+    if (g_outputDirty && (now - lastOutputBroadcast >= 50)) {
+      lastOutputBroadcast = now;
+      g_outputDirty = false;
+      // Message 1: axes 0-3 (channels 0-7)
+      {
+        uint8_t data[8];
+        for (int i = 0; i < 4; i++) {
+          int16_t val = (int16_t)g_solenoidValues[i * 2] -
+                        (int16_t)g_solenoidValues[i * 2 + 1];
+          data[i * 2] = (uint8_t)(val & 0xFF);
+          data[i * 2 + 1] = (uint8_t)((val >> 8) & 0xFF);
+        }
+        g_can->sendBroadcast(PF_MOTOR_OUTPUT1, data, 8, 6);
+      }
+      // Message 2: axes 4-7 (channels 8-15)
+      {
+        uint8_t data[8];
+        for (int i = 0; i < 4; i++) {
+          int idx = 4 + i;
+          int16_t val = (int16_t)g_solenoidValues[idx * 2] -
+                        (int16_t)g_solenoidValues[idx * 2 + 1];
+          data[i * 2] = (uint8_t)(val & 0xFF);
+          data[i * 2 + 1] = (uint8_t)((val >> 8) & 0xFF);
+        }
+        g_can->sendBroadcast(PF_MOTOR_OUTPUT2, data, 8, 6);
+      }
+    }
+    updateLED();
+    can_output_loop();
+#if defined(ENABLE_OTA_WEBSERVER)
   }
-  updateLED();
-  can_output_loop();
+#endif
 }
 
 #endif // ECU_TYPE_MOTOR_DRIVER
