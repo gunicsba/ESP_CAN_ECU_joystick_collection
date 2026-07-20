@@ -19,6 +19,7 @@ jobs:
         env:
           - motor_driver
           - motor_driver_ota
+          - motor_driver_s3_ota
           - joystick1
           - joystick1_ota
           - joystick2
@@ -48,8 +49,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: firmware-${{ matrix.env }}
-          path: .pio/build/${{ matrix.env }}/firmware.bin
+          path: |
+            .pio/build/${{ matrix.env }}/firmware.bin
+            .pio/build/${{ matrix.env }}/bootloader.bin
+            .pio/build/${{ matrix.env }}/partitions.bin
           retention-days: 30
+          if-no-files-found: ignore
 
   release:
     needs: build
@@ -67,7 +72,14 @@ jobs:
           mkdir -p release
           for dir in firmware/firmware-*; do
             env_name=$(basename "$dir" | sed 's/firmware-//')
-            cp "$dir/firmware.bin" "release/${env_name}.bin"
+            # Copy all available bin files
+            for file in "$dir"/*.bin; do
+              if [ -f "$file" ]; then
+                filename=$(basename "$file")
+                # Rename files to include env name for clarity
+                cp "$file" "release/${env_name}_${filename}"
+              fi
+            done
           done
           ls -la release/
 

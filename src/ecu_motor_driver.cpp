@@ -945,6 +945,17 @@ static uint32_t loopCount = 0;
 void ecu_loop() {
   uint32_t now = millis();
   loopCount++;
+
+  // Prioritize web server during OTA
+#if defined(ENABLE_OTA_WEBSERVER)
+  ota_loop();
+  if (ota_is_active()) {
+    // During OTA, call handleClient multiple times to keep up with upload
+    ota_loop();
+    ota_loop();
+  }
+#endif
+
   yield();
   g_can->loop();
   processCAN();
@@ -1036,10 +1047,6 @@ void ecu_loop() {
   }
   updateLED();
   can_output_loop();
-#if defined(ENABLE_OTA_WEBSERVER)
-  yield();
-  ota_loop();
-#endif
 }
 
 #endif // ECU_TYPE_MOTOR_DRIVER

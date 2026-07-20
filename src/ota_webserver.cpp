@@ -5,6 +5,7 @@
 #include "ForwarderCAN.h"
 #include "ForwarderConfig.h"
 #include "web_state.h"
+#include <ESP2SOTA.h>
 #include <ESPmDNS.h>
 #include <Update.h>
 #include <WebServer.h>
@@ -421,10 +422,12 @@ input[type="range"] {
 <div id="ota" class="panel">
     <div class="card">
         <h3>Firmware Update</h3>
+        <p style="color:#94a3b8;font-size:0.85rem;margin:0 0 12px">For best results, close other tabs before uploading.</p>
         <label style="display:block;margin:8px 0 4px;color:#94a3b8">Select firmware (.bin)</label>
         <input type="file" id="firmware" accept=".bin" style="width:100%;padding:8px;background:#0f172a;border:1px solid #475569;border-radius:6px;color:#e2e8f0">
         <button onclick="startUpload()" style="margin-top:12px;width:auto">Update Firmware</button>
         <div class="bar-track" style="margin-top:12px;height:8px"><div class="bar-fill" id="prog" style="width:0%"></div></div>
+        <div id="otaStatus" style="margin-top:8px;color:#94a3b8"></div>
     </div>
 </div>
 
@@ -515,7 +518,17 @@ const joyCombined = {
     'mindketto-csuk': ['fokeret-csuk', 'segedkeret-csuk']
 };
 
+// Global abort controller for joy commands to prevent queuing
+let joyAbortController = null;
+let joyHeartbeatTimer = null;
+
 function joySendCmd(cmd, active) {
+    // Abort any pending request to prevent queuing
+    if (joyAbortController) {
+        joyAbortController.abort();
+    }
+    joyAbortController = new AbortController();
+    
     // Handle combined commands
     if (joyCombined[cmd]) {
         joyCombined[cmd].forEach(c => joySendSingle(c, active));
@@ -528,13 +541,33 @@ function joySendSingle(cmd, active) {
     fetch('/api/joycmd', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({cmd: cmd, active: active})
-    }).catch(e => console.error('joycmd err', e));
+        body: JSON.stringify({cmd: cmd, active: active}),
+        signal: joyAbortController.signal
+    }).catch(e => {
+        if (e.name !== 'AbortError') {
+            console.error('joycmd err', e);
+        }
+    });
 }
 
-// Attach momentary button handlers
-document.querySelectorAll('.joy-btn.momentary').forEach(btn => {
+function startJoyHeartbeat(cmd) {
+    stopJoyHeartbeat();
+    joyHeartbeatTimer = setInterval(() => {
+        joySendCmd(cmd, true);
+    }, 1000); // Send heartbeat every 1 second
+}
+
+function stopJoyHeartbeat() {
+    if (joyHeartbeatTimer) {
+        clearInterval(joyHeartbeatTimer);
+        joyHeartbeatTimer = null;
+    }
+}
+
+// Attach momentary button handlers - simple and responsive
+ document.querySelectorAll('.joy-btn.momentary').forEach(btn => {
     let pressed = false;
+
     const press = e => {
         e.preventDefault();
         if (pressed) return;
@@ -542,14 +575,18 @@ document.querySelectorAll('.joy-btn.momentary').forEach(btn => {
         btn.style.background = 'linear-gradient(180deg,#5bc7bb,#36978d)';
         try { btn.setPointerCapture(e.pointerId); } catch(ex) {}
         joySendCmd(btn.dataset.cmd, true);
+        startJoyHeartbeat(btn.dataset.cmd); // Keep alive while holding
     };
+    
     const release = e => {
         e.preventDefault();
         if (!pressed) return;
         pressed = false;
         btn.style.background = 'linear-gradient(180deg,#3d454a,#30363a)';
+        stopJoyHeartbeat();
         joySendCmd(btn.dataset.cmd, false);
     };
+    
     btn.addEventListener('pointerdown', press);
     btn.addEventListener('pointerup', release);
     btn.addEventListener('pointercancel', release);
@@ -1138,21 +1175,24 @@ async function saveCanOut() {
 
 function startUpload() {
     const file = document.getElementById('firmware').files[0];
-    if (!file) { setStatus('Please select a file', 'error'); return; }
+    if (!file) { document.getElementById('otaStatus').textContent = 'Please select a file'; return; }
+    document.getElementById('otaStatus').textContent = 'Uploading...';
     const prog = document.getElementById('prog');
     const xhr = new XMLHttpRequest();
+    xhr.timeout = 180000; // 3 minute timeout
     xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) prog.style.width = (e.loaded / e.total * 100).toFixed(1) + '%';
     };
     xhr.onload = () => {
         if (xhr.status === 200) {
-            setStatus('Update successful! Rebooting...', 'success');
+            document.getElementById('otaStatus').textContent = 'Update successful! Rebooting...';
             setTimeout(() => location.reload(), 8000);
         } else {
-            setStatus('Update failed: ' + xhr.responseText, 'error');
+            document.getElementById('otaStatus').textContent = 'Update failed: ' + xhr.responseText;
         }
     };
-    xhr.onerror = () => setStatus('Network error', 'error');
+    xhr.onerror = () => document.getElementById('otaStatus').textContent = 'Network error. Try closing other tabs.';
+    xhr.ontimeout = () => document.getElementById('otaStatus').textContent = 'Upload timeout. Try closing other tabs.';
     xhr.open('POST', '/update');
     xhr.send(file);
 }
@@ -2074,14 +2114,24 @@ static void handleUpdate() {
     Serial.printf("[OTA] Start: %s\n", upload.filename.c_str());
     if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
       Update.printError(Serial);
+      server.send(500, "text/plain", "OTA begin failed");
+      otaActive = false;
+      return;
     }
   } else if (upload.status == UPLOAD_FILE_WRITE) {
     if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
       Update.printError(Serial);
+      server.send(500, "text/plain", "OTA write failed");
+      otaActive = false;
+      return;
     }
+    // Yield and delay to keep Ethernet stack happy and prevent resets
+    yield();
+    delay(10);             // Increased delay for Ethernet stack
+    server.handleClient(); // Process any pending requests
   } else if (upload.status == UPLOAD_FILE_END) {
     if (Update.end(true)) {
-      Serial.printf("[OTA] Success\n");
+      Serial.printf("[OTA] Success: %u bytes\n", upload.totalSize);
       server.send(200, "text/plain", "OK");
       delay(500);
       ESP.restart();
@@ -2372,6 +2422,73 @@ static void scanHeartbeats() {
 }
 
 // ---------------------------------------------------------------------------
+// Dedicated OTA page - minimal page with no background polling
+// ---------------------------------------------------------------------------
+static void handleOtaPage() {
+  String html = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Firmware Update</title>
+  <style>
+    body { font-family: sans-serif; background: #0f172a; color: #e2e8f0; padding: 20px; }
+    .card { background: #1e293b; border-radius: 12px; padding: 20px; max-width: 400px; margin: 0 auto; }
+    h3 { margin: 0 0 16px; }
+    input[type=file] { width: 100%; padding: 8px; background: #0f172a; border: 1px solid #475569; border-radius: 6px; color: #e2e8f0; }
+    button { margin-top: 12px; width: 100%; padding: 10px; background: #3b82f6; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; }
+    button:hover { background: #2563eb; }
+    .bar-track { margin-top: 12px; height: 8px; background: #334155; border-radius: 4px; overflow: hidden; }
+    .bar-fill { height: 100%; background: #22c55e; width: 0%; transition: width 0.3s; }
+    .status { margin-top: 12px; padding: 8px; border-radius: 6px; display: none; }
+    .success { background: #166534; display: block; }
+    .error { background: #991b1b; display: block; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h3>Firmware Update</h3>
+    <label style="display:block;margin:8px 0 4px;color:#94a3b8">Select firmware (.bin)</label>
+    <input type="file" id="firmware" accept=".bin">
+    <button onclick="startUpload()">Update Firmware</button>
+    <div class="bar-track"><div class="bar-fill" id="prog"></div></div>
+    <div id="status" class="status"></div>
+  </div>
+  <script>
+    function setStatus(msg, type) {
+      const el = document.getElementById('status');
+      el.textContent = msg;
+      el.className = 'status ' + type;
+    }
+    function startUpload() {
+      const file = document.getElementById('firmware').files[0];
+      if (!file) { setStatus('Please select a file', 'error'); return; }
+      const prog = document.getElementById('prog');
+      const xhr = new XMLHttpRequest();
+      xhr.timeout = 120000;
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) prog.style.width = (e.loaded / e.total * 100).toFixed(1) + '%';
+      };
+      xhr.onload = () => {
+        if (xhr.status === 200) {
+          setStatus('Update successful! Rebooting...', 'success');
+          setTimeout(() => window.close(), 5000);
+        } else {
+          setStatus('Update failed: ' + xhr.responseText, 'error');
+        }
+      };
+      xhr.onerror = () => setStatus('Network error', 'error');
+      xhr.ontimeout = () => setStatus('Upload timeout', 'error');
+      xhr.open('POST', '/update');
+      xhr.send(file);
+    }
+  </script>
+</body>
+</html>
+)rawliteral";
+  server.send(200, "text/html", html);
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -2403,6 +2520,7 @@ void ota_setup(const char *hostname) {
                 ip.toString().c_str());
 
   server.on("/", HTTP_GET, handleRoot);
+  server.on("/ota", HTTP_GET, handleOtaPage);
   server.on("/api/state", HTTP_GET, handleState);
   server.on("/api/config", HTTP_GET, handleConfigGet);
   server.on("/api/config", HTTP_POST, handleConfigPost);
@@ -2422,8 +2540,8 @@ void ota_setup(const char *hostname) {
   server.on("/api/joycmd", HTTP_POST, handleJoyCmdPost);
   server.on("/api/joymapping", HTTP_GET, handleJoyMapGet);
   server.on("/api/joymapping", HTTP_POST, handleJoyMapPost);
-  server.on("/update", HTTP_POST, handleUpdatePost, handleUpdate);
   server.begin();
+  ESP2SOTA.begin(&server);
   Serial.println("[OTA] Web server started on port 80");
 }
 

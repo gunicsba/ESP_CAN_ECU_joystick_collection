@@ -265,24 +265,48 @@ pio run -e joystick1 --target upload
 
 ### Flashing with esptool
 
-For direct flashing without PlatformIO, use the included `esptool.exe`:
+For direct flashing without PlatformIO, use the included `esptool.exe`. The ESP32-S3 requires multiple files at specific flash offsets:
+
+**Full flash (required when switching from different firmware):**
 
 ```bash
-# Flash motor driver S3 firmware
-esptool.exe --chip esp32s3 --port COM7 --baud 921600 write_flash -z 0x0 .pio\build\motor_driver_s3_ota\firmware.bin
+# First erase flash
+esptool.exe --chip esp32s3 --port COM7 erase_flash
+
+# Then flash all components at correct offsets
+esptool.exe --chip esp32s3 --port COM7 --baud 115200 write_flash -z ^
+  0x0 bootloader.bin ^
+  0x8000 partitions.bin ^
+  0x10000 firmware.bin
 ```
+
+**Application-only flash (for updates on same firmware family):**
+
+```bash
+# Only update the application (requires existing compatible bootloader)
+esptool.exe --chip esp32s3 --port COM7 --baud 115200 write_flash -z 0x10000 firmware.bin
+```
+
+**Flash offsets explained:**
+| Offset | File | Description |
+|--------|------|-------------|
+| `0x0` | `bootloader.bin` | ESP32-S3 bootloader |
+| `0x8000` | `partitions.bin` | Partition table |
+| `0x10000` | `firmware.bin` | Application firmware |
 
 **Parameters:**
 - `--chip esp32s3` - Target chip type
 - `--port COM7` - Serial port (use `mode` command to find available ports)
-- `--baud 921600` - Upload speed (use `460800` if connection is unstable)
-- `write_flash -z 0x0` - Write compressed at flash address 0x0
+- `--baud 115200` - Upload speed (use `460800` or `921600` for faster flashing)
+- `write_flash -z` - Write compressed
 
 **If the board is crash-looping** (e.g., Guru Meditation Error), you must manually enter download mode:
 1. Hold the BOOT button
 2. Press and release RESET while holding BOOT
 3. Release BOOT
 4. Run the esptool command above
+
+**Note:** All binary files are included in the GitHub release. Use the files from the `motor_driver_s3_ota` build.
 
 ### OTA Updates
 
