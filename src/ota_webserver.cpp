@@ -983,7 +983,7 @@ async function fetchState() {
     const mySeq = ++stateSeq;
     try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 500); // 500ms timeout
+        const timeoutId = setTimeout(() => controller.abort(), 1000); // 1000ms timeout for slow networks
         const r = await fetch('/api/state', { signal: controller.signal });
         clearTimeout(timeoutId);
         // Ignore if a newer request has been made
@@ -1278,7 +1278,7 @@ async function fetchTestState() {
     const mySeq = ++testSeq;
     try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 500); // 500ms timeout
+        const timeoutId = setTimeout(() => controller.abort(), 1000); // 1000ms timeout for slow networks
         const r = await fetch('/api/motortest', { signal: controller.signal });
         clearTimeout(timeoutId);
         // Ignore if a newer request has been made
@@ -2129,11 +2129,17 @@ static void handleUpdate() {
   HTTPUpload &upload = server.upload();
   if (upload.status == UPLOAD_FILE_START) {
     otaActive = true;
+#if defined(ECU_TYPE_MOTOR_DRIVER)
+    suspendUDP(); // Close UDP sockets to free WT5500 buffer for HTTP upload
+#endif
     Serial.printf("[OTA] Start: %s\n", upload.filename.c_str());
     if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
       Update.printError(Serial);
       server.send(500, "text/plain", "OTA begin failed");
       otaActive = false;
+#if defined(ECU_TYPE_MOTOR_DRIVER)
+      resumeUDP();
+#endif
       return;
     }
   } else if (upload.status == UPLOAD_FILE_WRITE) {
@@ -2158,9 +2164,15 @@ static void handleUpdate() {
       server.send(500, "text/plain", Update.errorString());
     }
     otaActive = false;
+#if defined(ECU_TYPE_MOTOR_DRIVER)
+    resumeUDP(); // Reopen UDP sockets
+#endif
   } else if (upload.status == UPLOAD_FILE_ABORTED) {
     Update.end();
     otaActive = false;
+#if defined(ECU_TYPE_MOTOR_DRIVER)
+    resumeUDP(); // Reopen UDP sockets
+#endif
     Serial.println("[OTA] Aborted");
   }
 }
@@ -2463,11 +2475,12 @@ void ota_setup(const char *hostname) {
   String ssid = String(hostname);
   WiFi.softAP(ssid.c_str(), "12345678");
 
-  if (!MDNS.begin(hostname)) {
-    Serial.println("[OTA] mDNS failed");
-  } else {
-    MDNS.addService("http", "tcp", 80);
-  }
+  // mDNS disabled to reduce multicast traffic on W5500 buffer
+  // if (!MDNS.begin(hostname)) {
+  //   Serial.println("[OTA] mDNS failed");
+  // } else {
+  //   MDNS.addService("http", "tcp", 80);
+  // }
 
   IPAddress ip = WiFi.softAPIP();
   Serial.printf("[OTA] AP '%s' started, IP: %s\n", ssid.c_str(),

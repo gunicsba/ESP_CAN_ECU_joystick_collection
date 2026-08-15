@@ -59,6 +59,7 @@ static Adafruit_PWMServoDriver pca1 =
     Adafruit_PWMServoDriver(PCA9685_I2C_ADDR1);
 static Adafruit_PWMServoDriver pca2 =
     Adafruit_PWMServoDriver(PCA9685_I2C_ADDR2);
+bool g_pca1Present = false;
 bool g_pca2Present = false;
 
 static NeoPixelBus<NeoGrbFeature, Neo800KbpsMethod> strip(1, WS2812_PIN);
@@ -115,7 +116,7 @@ static const uint8_t ECU_NAME[8] = {
 static void setPWM(uint8_t channel, uint16_t value) {
   if (value > 4095)
     value = 4095;
-  if (channel < 16) {
+  if (channel < 16 && g_pca1Present) {
     pca1.setPWM(channel, 0, value);
   } else if (channel < 32 && g_pca2Present) {
     pca2.setPWM(channel - 16, 0, value);
@@ -153,16 +154,25 @@ static void allOff(const char *caller) {
 static void initPCA() {
   Wire.setPins(PCA9685_SDA, PCA9685_SCL);
   Wire.begin();
-  pca1.begin();
-  pca1.setOscillatorFrequency(25000000);
-  pca1.setPWMFreq(200);
+  // Check if PCA1 is present
+  Wire.beginTransmission(PCA9685_I2C_ADDR1);
+  g_pca1Present = (Wire.endTransmission() == 0);
+  if (g_pca1Present) {
+    pca1.begin();
+    pca1.setOscillatorFrequency(25000000);
+    pca1.setPWMFreq(200);
+    Serial.println("[MotorDriver] PCA1 detected at 0x40");
+  } else {
+    Serial.println("[MotorDriver] PCA1 NOT detected at 0x40 - PWM disabled");
+  }
+  // Check if PCA2 is present
   Wire.beginTransmission(PCA9685_I2C_ADDR2);
   g_pca2Present = (Wire.endTransmission() == 0);
   if (g_pca2Present) {
     pca2.begin();
     pca2.setOscillatorFrequency(25000000);
     pca2.setPWMFreq(200);
-    Serial.println("[MotorDriver] 2nd PCA9685 detected at 0x41");
+    Serial.println("[MotorDriver] PCA2 detected at 0x41");
   }
 }
 
@@ -718,11 +728,11 @@ static void processUDP() {
   struct sockaddr_in src_addr;
   socklen_t addr_len = sizeof(src_addr);
 
-  // Check AOG UDP (port 8888)
+  // Drain ALL pending AOG UDP packets (port 8888) to prevent buffer buildup
   if (g_sockAOG >= 0) {
-    int len = recvfrom(g_sockAOG, data, sizeof(data), MSG_DONTWAIT,
-                       (struct sockaddr *)&src_addr, &addr_len);
-    if (len > 0) {
+    int len;
+    while ((len = recvfrom(g_sockAOG, data, sizeof(data), MSG_DONTWAIT,
+                           (struct sockaddr *)&src_addr, &addr_len)) > 0) {
       // PGN 32503: header bytes 247, 126
       if (len >= 6 && data[0] == 247 && data[1] == 126) {
         g_motorCfg.ethIP0 = data[2];
@@ -738,12 +748,12 @@ static void processUDP() {
     }
   }
 
-  // Check AGIO UDP (port 9999)
+  // Drain ALL pending AGIO UDP packets (port 9999) to prevent buffer buildup
   if (g_sockAGIO >= 0) {
     addr_len = sizeof(src_addr);
-    int len = recvfrom(g_sockAGIO, data, sizeof(data), MSG_DONTWAIT,
-                       (struct sockaddr *)&src_addr, &addr_len);
-    if (len > 0) {
+    int len;
+    while ((len = recvfrom(g_sockAGIO, data, sizeof(data), MSG_DONTWAIT,
+                           (struct sockaddr *)&src_addr, &addr_len)) > 0) {
       // AGIO PGN 201: header 128, 129, 127, 201, 5, 201, 201
       if (len >= 10 && data[0] == 128 && data[1] == 129 && data[2] == 127 &&
           data[3] == 201 && data[4] == 5 && data[5] == 201 && data[6] == 201) {
@@ -758,6 +768,70 @@ static void processUDP() {
         ESP.restart();
       }
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Suspend/resume UDP sockets during OTA to free WT5500 buffer space
+// ---------------------------------------------------------------------------
+static int g_savedSockAOG = -1;
+static int g_savedSockAGIO = -1;
+
+void suspendUDP() {
+  if (g_sockAOG >= 0) {
+    g_savedSockAOG = g_sockAOG;
+    close(g_sockAOG);
+    g_sockAOG = -1;
+    Serial.println("[OTA] UDP socket AOG closed");
+  }
+  if (g_sockAGIO >= 0) {
+    g_savedSockAGIO = g_sockAGIO;
+    close(g_sockAGIO);
+    g_sockAGIO = -1;
+    Serial.println("[OTA] UDP socket AGIO closed");
+  }
+}
+
+void resumeUDP() {
+  if (g_savedSockAOG >= 0) {
+    // Recreate AOG socket
+    struct sockaddr_in addr;
+    g_sockAOG = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (g_sockAOG >= 0) {
+      memset(&addr, 0, sizeof(addr));
+      addr.sin_family = AF_INET;
+      addr.sin_port = htons(UDP_AOG_PORT);
+      addr.sin_addr.s_addr = htonl(INADDR_ANY);
+      if (bind(g_sockAOG, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        close(g_sockAOG);
+        g_sockAOG = -1;
+      } else {
+        int flags = fcntl(g_sockAOG, F_GETFL, 0);
+        fcntl(g_sockAOG, F_SETFL, flags | O_NONBLOCK);
+      }
+    }
+    g_savedSockAOG = -1;
+    Serial.println("[OTA] UDP socket AOG reopened");
+  }
+  if (g_savedSockAGIO >= 0) {
+    // Recreate AGIO socket
+    struct sockaddr_in addr;
+    g_sockAGIO = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (g_sockAGIO >= 0) {
+      memset(&addr, 0, sizeof(addr));
+      addr.sin_family = AF_INET;
+      addr.sin_port = htons(UDP_AGIO_PORT);
+      addr.sin_addr.s_addr = htonl(INADDR_ANY);
+      if (bind(g_sockAGIO, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        close(g_sockAGIO);
+        g_sockAGIO = -1;
+      } else {
+        int flags = fcntl(g_sockAGIO, F_GETFL, 0);
+        fcntl(g_sockAGIO, F_SETFL, flags | O_NONBLOCK);
+      }
+    }
+    g_savedSockAGIO = -1;
+    Serial.println("[OTA] UDP socket AGIO reopened");
   }
 }
 
@@ -959,6 +1033,10 @@ void ecu_loop() {
   yield();
   g_can->loop();
   processCAN();
+  // Call web server after CAN processing to improve responsiveness
+#if defined(ENABLE_OTA_WEBSERVER)
+  ota_loop();
+#endif
   // Skip most processing during OTA to maximize network resources
 #if defined(ENABLE_OTA_WEBSERVER)
   if (!ota_is_active()) {
@@ -968,6 +1046,10 @@ void ecu_loop() {
     updateAxes();
     updateButtonOutputs();
     processJoystickCommands();
+    // Call web server after heavy processing
+#if defined(ENABLE_OTA_WEBSERVER)
+    ota_loop();
+#endif
     // Update output active indicator pin (GPIO5)
     {
       bool anyActive = false;

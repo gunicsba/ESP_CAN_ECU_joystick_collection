@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Permetező joystick UI</title>
+<style>
+  :root{
+    --bg:#15181b;
+    --panel:#2b3034;
+    --panel2:#363c41;
+    --accent:#72d0c4;
+    --accent2:#a8eee6;
+    --text:#f2f5f7;
+    --muted:#9ba7ad;
+    --danger:#df5a5a;
+    --ok:#5fd18a;
+    --shadow:0 12px 30px rgba(0,0,0,.28);
+  }
+
+  *{
+    box-sizing:border-box;
+    -webkit-tap-highlight-color:transparent;
+  }
+
+  html,body{
+    margin:0;
+    width:100%;
+    min-height:100%;
+    background:var(--bg);
+    color:var(--text);
+    font-family:Inter,Segoe UI,Arial,sans-serif;
+    overscroll-behavior:none;
+  }
+
+  body{
+    min-height:100vh;
+  }
+
+  button,input{
+    font:inherit;
+  }
+
+  button{
+    border:0;
+    color:var(--text);
+    cursor:pointer;
+    user-select:none;
+    -webkit-user-select:none;
+    touch-action:manipulation;
+  }
+
+  .app{
+    min-height:100vh;
+    padding:10px;
+    background:linear-gradient(145deg,#171a1d,#101214);
+  }
+
+  .shell{
+    width:min(1180px,100%);
+    margin:0 auto;
+  }
+
+  .topbar{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    margin-bottom:10px;
+  }
+
+  .title{
+    font-size:clamp(19px,4.8vw,32px);
+    font-weight:900;
+  }
+
+  .status{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    font-size:12px;
+    color:var(--muted);
+    white-space:nowrap;
+  }
+
+  .dot{
+    width:12px;
+    height:12px;
+    border-radius:50%;
+    background:var(--ok);
+    box-shadow:0 0 12px var(--ok);
+  }
+
+  .mode-switch{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:8px;
+    padding:6px;
+    border-radius:18px;
+    background:#22272b;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.04);
+    margin-bottom:10px;
+    position:sticky;
+    top:0;
+    z-index:10;
+  }
+
+  .mode-btn{
+    min-height:52px;
+    border-radius:14px;
+    background:transparent;
+    font-weight:900;
+    font-size:15px;
+  }
+
+  .mode-btn.active{
+    background:linear-gradient(180deg,#69d2c5,#369b90);
+    box-shadow:0 5px 14px rgba(0,0,0,.28);
+  }
+
+  .screen{
+    display:none;
+  }
+
+  .screen.active{
+    display:block;
+  }
+
+  .card{
+    background:linear-gradient(180deg,var(--panel2),var(--panel));
+    border:1px solid rgba(255,255,255,.06);
+    border-radius:22px;
+    box-shadow:var(--shadow);
+  }
+
+  .main-card{
+    padding:10px;
+  }
+
+  .joystick{
+    display:grid;
+    grid-template-columns:repeat(3,minmax(0,1fr));
+    grid-template-rows:repeat(3,minmax(88px,1fr));
+    gap:8px;
+  }
+
+  .btn{
+    min-height:88px;
+    border-radius:16px;
+    background:linear-gradient(180deg,#3d454a,#30363a);
+    border:1px solid rgba(255,255,255,.08);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.06),
+      0 6px 14px rgba(0,0,0,.22);
+    font-size:clamp(14px,3.5vw,22px);
+    font-weight:900;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:4px;
+    padding:8px;
+    text-align:center;
+  }
+
+  .btn:active,
+  .btn.active{
+    transform:translateY(2px);
+    background:linear-gradient(180deg,#5bc7bb,#36978d);
+    box-shadow:inset 0 3px 10px rgba(0,0,0,.22);
+  }
+
+  .icon{
+    font-size:clamp(27px,7vw,48px);
+    line-height:1;
+  }
+
+  .center{
+    border-radius:50%;
+    aspect-ratio:1/1;
+    align-self:center;
+    justify-self:center;
+    width:min(82%,150px);
+    min-width:72px;
+    background:radial-gradient(circle at 35% 30%,#626d73,#2d3337 60%,#22272a);
+    border:7px solid #1d2124;
+    box-shadow:
+      inset 0 5px 18px rgba(255,255,255,.06),
+      0 8px 20px rgba(0,0,0,.35);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-weight:900;
+    font-size:clamp(13px,3.7vw,22px);
+    color:var(--text);
+  }
+
+  .center.active{
+    background:radial-gradient(circle at 35% 30%,#90e4da,#3aa397 65%,#276d65);
+  }
+
+  .master-row{
+    display:grid;
+    grid-template-columns:1fr 1fr 1fr;
+    gap:8px;
+    margin-top:8px;
+  }
+
+  .master{
+    min-height:74px;
+  }
+
+  .master.danger:active,
+  .master.danger.active{
+    background:linear-gradient(180deg,#ef6d6d,#b93f3f);
+  }
+
+  .fold-card{
+    padding:12px;
+  }
+
+  .fold-operation{
+    padding:10px;
+    border-radius:18px;
+    background:rgba(0,0,0,.14);
+    border:1px solid rgba(255,255,255,.05);
+  }
+
+  .section-title{
+    font-size:clamp(16px,4vw,23px);
+    font-weight:900;
+    margin-bottom:8px;
+  }
+
+  .section-note{
+    font-size:12px;
+    line-height:1.35;
+    color:var(--muted);
+    margin-bottom:10px;
+  }
+
+  .operation-labels{
+    display:grid;
+    grid-template-columns:minmax(0,1fr) 58px minmax(0,1fr);
+    gap:7px;
+    margin-bottom:6px;
+    color:var(--muted);
+    font-size:12px;
+    font-weight:800;
+    text-align:center;
+  }
+
+  .fold-row{
+    display:grid;
+    grid-template-columns:minmax(0,1fr) 58px minmax(0,1fr);
+    gap:7px;
+    margin-bottom:9px;
+  }
+
+  .fold-row:last-child{
+    margin-bottom:0;
+  }
+
+  .fold-row .btn{
+    min-height:104px;
+  }
+
+  .together-btn{
+    min-width:0;
+    padding:4px;
+    border-radius:12px;
+    font-size:11px;
+    writing-mode:vertical-rl;
+    transform:none;
+  }
+
+  .together-btn:active,
+  .together-btn.active{
+    transform:translateY(2px);
+  }
+
+  .together-btn .icon{
+    font-size:24px;
+  }
+
+  .height-panel{
+    margin-top:10px;
+  }
+
+  .height-card{
+    padding:12px;
+    border-radius:18px;
+    background:rgba(0,0,0,.14);
+    border:1px solid rgba(255,255,255,.05);
+  }
+
+  .height-controls{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:10px;
+  }
+
+  .height-btn{
+    min-height:96px;
+  }
+
+  @media (min-width:760px){
+    .app{
+      padding:16px;
+    }
+
+    .mode-switch{
+      width:520px;
+      margin-left:auto;
+      margin-right:auto;
+    }
+
+    .joystick{
+      grid-template-rows:repeat(3,minmax(110px,1fr));
+      gap:12px;
+    }
+
+    .master-row{
+      gap:12px;
+      margin-top:12px;
+    }
+
+    .main-card,
+    .fold-card{
+      padding:16px;
+    }
+
+  }
+
+  @media (max-width:560px){
+    .topbar{
+      align-items:flex-start;
+    }
+
+    .status span:last-child{
+      display:none;
+    }
+
+    .joystick{
+      grid-template-rows:repeat(3,88px);
+      gap:6px;
+    }
+
+    .btn{
+      min-height:78px;
+      border-radius:14px;
+      padding:6px;
+    }
+
+    .master{
+      min-height:68px;
+    }
+
+    .operation-labels,
+    .fold-row{
+      grid-template-columns:minmax(0,1fr) 48px minmax(0,1fr);
+      gap:5px;
+    }
+
+    .fold-row .btn{
+      min-height:92px;
+    }
+
+    .together-btn{
+      font-size:10px;
+    }
+
+    .height-btn{
+      min-height:84px;
+    }
+  }
+
+  @media (max-width:390px){
+    .app{
+      padding:6px;
+    }
+
+    .main-card,
+    .fold-card{
+      padding:7px;
+    }
+
+    .mode-btn{
+      min-height:46px;
+      font-size:14px;
+    }
+
+    .joystick{
+      grid-template-rows:repeat(3,80px);
+    }
+
+    .btn{
+      min-height:72px;
+      font-size:12px;
+    }
+
+    .icon{
+      font-size:26px;
+    }
+
+    .master{
+      min-height:62px;
+    }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="shell">
+    <div class="topbar">
+      <div class="title">Permetező vezérlés</div>
+      <div class="status">
+        <span class="dot"></span>
+        <span>Kapcsolat rendben</span>
+      </div>
+    </div>
+
+    <nav class="mode-switch" aria-label="Üzemmód választó">
+      <button class="mode-btn active" data-screen="mainScreen">Fő vezérlés</button>
+      <button class="mode-btn" data-screen="foldScreen">Keret nyitás / csukás</button>
+    </nav>
+
+    <section id="mainScreen" class="screen active">
+      <div class="card main-card">
+        <div class="joystick">
+          <button class="btn momentary" data-command="bal-szarny-fel">
+            <span class="icon">↖</span>
+            <span>Bal szárny fel</span>
+          </button>
+
+          <button class="btn momentary" data-command="keretmagassag-fel">
+            <span class="icon">▲</span>
+            <span>Közép fel</span>
+          </button>
+
+          <button class="btn momentary" data-command="jobb-szarny-fel">
+            <span class="icon">↗</span>
+            <span>Jobb szárny fel</span>
+          </button>
+
+          <button class="btn momentary" data-command="bal-billentes">
+            <span class="icon">↶</span>
+            <span>Bal billentés</span>
+          </button>
+
+          <button class="center momentary" data-command="master">
+            MASTER
+          </button>
+
+          <button class="btn momentary" data-command="jobb-billentes">
+            <span class="icon">↷</span>
+            <span>Jobb billentés</span>
+          </button>
+
+          <button class="btn momentary" data-command="bal-szarny-le">
+            <span class="icon">↙</span>
+            <span>Bal szárny le</span>
+          </button>
+
+          <button class="btn momentary" data-command="keretmagassag-le">
+            <span class="icon">▼</span>
+            <span>Közép le</span>
+          </button>
+
+          <button class="btn momentary" data-command="jobb-szarny-le">
+            <span class="icon">↘</span>
+            <span>Jobb szárny le</span>
+          </button>
+        </div>
+
+        <div class="master-row">
+          <button class="btn master toggle" data-command="szakaszok">
+            <span class="icon">▦</span>
+            <span>Szakaszok</span>
+          </button>
+
+          <button class="btn master toggle" data-command="auto">
+            <span class="icon">A</span>
+            <span>Automata</span>
+          </button>
+
+          <button class="btn master danger momentary" data-command="stop">
+            <span class="icon">■</span>
+            <span>STOP</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section id="foldScreen" class="screen">
+      <div class="card fold-card">
+        <div class="fold-operation">
+          <div class="section-title">Keret nyitás / csukás</div>
+          <div class="section-note">
+            A középső keskeny gombbal a fő- és segédkeret egyszerre működik.
+            Így indítható a főkeret külön, majd együtt a kettő, végül a segédkeret külön.
+          </div>
+
+          <div class="operation-labels">
+            <span>Főkeret</span>
+            <span>Együtt</span>
+            <span>Segédkeret</span>
+          </div>
+
+          <div class="fold-row">
+            <button class="btn momentary" data-command="fokeret-nyit">
+              <span class="icon">↞</span>
+              <span>Nyit</span>
+            </button>
+
+            <button class="btn together-btn momentary" data-command="mindketto-nyit">
+              <span class="icon">↔</span>
+              <span>EGYÜTT NYIT</span>
+            </button>
+
+            <button class="btn momentary" data-command="segedkeret-nyit">
+              <span class="icon">↠</span>
+              <span>Nyit</span>
+            </button>
+          </div>
+
+          <div class="fold-row">
+            <button class="btn momentary" data-command="fokeret-csuk">
+              <span class="icon">→</span>
+              <span>Csuk</span>
+            </button>
+
+            <button class="btn together-btn momentary" data-command="mindketto-csuk">
+              <span class="icon">⇥</span>
+              <span>EGYÜTT CSUK</span>
+            </button>
+
+            <button class="btn momentary" data-command="segedkeret-csuk">
+              <span class="icon">←</span>
+              <span>Csuk</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="height-panel">
+          <div class="height-card">
+            <div class="section-title">Keretmagasság</div>
+            <div class="section-note">
+              Nyitás vagy csukás közben külön is nyomva tartható.
+            </div>
+
+            <div class="height-controls">
+              <button class="btn height-btn momentary" data-command="keretmagassag-le">
+                <span class="icon">▼</span>
+                <span>Le</span>
+              </button>
+
+              <button class="btn height-btn momentary" data-command="keretmagassag-fel">
+                <span class="icon">▲</span>
+                <span>Fel</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script>
+  const sendCommand = (name, value) => {
+    // Később itt lehet WebSocket, HTTP vagy más hardveres kommunikáció.
+    console.log("COMMAND", {
+      name,
+      value,
+      timestamp: Date.now()
+    });
+  };
+
+  const screens = document.querySelectorAll(".screen");
+  const modeButtons = document.querySelectorAll(".mode-btn");
+
+  modeButtons.forEach(button => {
+    button.addEventListener("click", () => {
+      modeButtons.forEach(item => item.classList.remove("active"));
+      screens.forEach(screen => screen.classList.remove("active"));
+
+      button.classList.add("active");
+      document.getElementById(button.dataset.screen).classList.add("active");
+    });
+  });
+
+  document.querySelectorAll(".momentary").forEach(button => {
+    const press = event => {
+      event.preventDefault();
+      button.classList.add("active");
+      button.setPointerCapture?.(event.pointerId);
+      sendCommand(button.dataset.command, 1);
+    };
+
+    const release = event => {
+      event.preventDefault();
+      if (!button.classList.contains("active")) return;
+      button.classList.remove("active");
+      sendCommand(button.dataset.command, 0);
+    };
+
+    button.addEventListener("pointerdown", press);
+    button.addEventListener("pointerup", release);
+    button.addEventListener("pointercancel", release);
+    button.addEventListener("lostpointercapture", release);
+  });
+
+  document.querySelectorAll(".toggle").forEach(button => {
+    button.addEventListener("click", () => {
+      button.classList.toggle("active");
+      sendCommand(
+        button.dataset.command,
+        button.classList.contains("active") ? 1 : 0
+      );
+    });
+  });
+
+</script>
+</body>
+</html>
