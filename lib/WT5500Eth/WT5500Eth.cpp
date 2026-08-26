@@ -56,6 +56,11 @@ bool WT5500Eth::begin(int miso, int mosi, int sck, int cs, int rst, int irq,
     return true;
   }
 
+  // Ensure netif stack is initialized (WiFi init normally does this,
+  // but builds without WiFi never call it -> esp_netif_new fails)
+  esp_netif_init();
+  esp_event_loop_create_default();
+
   Serial.printf("[WT5500] Initializing SPI Ethernet: MISO=%d MOSI=%d SCLK=%d "
                 "CS=%d RST=%d INT=%d\n",
                 miso, mosi, sck, cs, rst, irq);
@@ -159,7 +164,12 @@ bool WT5500Eth::begin(int miso, int mosi, int sck, int cs, int rst, int irq,
     return false;
   }
 
-  esp_netif_attach(_eth_netif, esp_eth_new_netif_glue(_eth_handle));
+  void *netif_glue = esp_eth_new_netif_glue(_eth_handle);
+  if (!netif_glue) {
+    Serial.println("[WT5500] Failed to create netif glue");
+    return false;
+  }
+  esp_netif_attach(_eth_netif, netif_glue);
 
   // Register event handlers
   esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, &eth_event_handler,

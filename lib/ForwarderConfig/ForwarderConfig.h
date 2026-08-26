@@ -177,6 +177,9 @@ public:
   bool loadMotorConfig(MotorConfig &cfg);
   bool saveMotorConfig(const MotorConfig &cfg);
   bool saveAxisConfig(uint8_t axisIdx, const AxisConfig &axis);
+  // True if any axis row was ever saved to NVS (distinguishes a fresh flash
+  // from an intentionally all-disabled configuration)
+  bool hasAxisConfig();
 
   // CAN output rules
   bool loadCanOutputRules(CanOutputRule rules[MAX_CAN_OUTPUT_RULES]);
@@ -191,6 +194,8 @@ public:
   // Button output rules
   bool loadButtonOutputRules(ButtonOutputRule rules[MAX_BUTTON_OUTPUT_RULES]);
   bool saveButtonOutputRule(uint8_t index, const ButtonOutputRule &rule);
+  // True if button rules were ever saved (key existence, not enabled state)
+  bool hasButtonRules();
 
   // Custom CAN buttons
   bool loadCustomCanButtons(CustomCanButton buttons[MAX_CUSTOM_CAN_BUTTONS]);

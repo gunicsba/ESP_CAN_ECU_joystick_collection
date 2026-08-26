@@ -4,7 +4,7 @@
  * Single unified joystick that exposes:
  * - All 4 ADS1115 channels (16-bit ADC)
  * - All 8 buttons from main PCA9555 @ 0x20
- * - All 16 buttons from extender PCA9555 @ 0x21
+ * - All 16 buttons from extender PCA9555 (auto-detected at 0x21-0x23)
  * - Optocoupler control via extender PCA9555
  * 
  * CAN Address: 0x80
@@ -23,6 +23,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <Adafruit_ADS1X15.h>
+#include "esp_task_wdt.h"
 #include "ForwarderCAN.h"
 
 // I2C pins
@@ -42,7 +43,8 @@
 
 // PCA9555 addresses
 #define PCA9555_MAIN_ADDR 0x20
-#define PCA9555_EXT_ADDR  0x21
+// Extender address is auto-detected at boot (0x21-0x23, depends on A0/A1/A2 strapping)
+static uint8_t pcaExtAddr = 0;
 
 // PCA9555 registers
 #define PCA9555_REG_INPUT0  0x00
@@ -92,11 +94,14 @@ void pca9555_write(uint8_t addr, uint8_t reg, uint8_t value) {
 }
 
 uint8_t pca9555_read(uint8_t addr, uint8_t reg) {
-  Wire.beginTransmission(addr);
-  Wire.write(reg);
-  Wire.endTransmission(false);
-  Wire.requestFrom(addr, (uint8_t)1);
-  if (Wire.available()) return Wire.read();
+  for (uint8_t attempt = 0; attempt < 3; attempt++) {
+    Wire.beginTransmission(addr);
+    Wire.write(reg);
+    if (Wire.endTransmission(false) != 0)
+      continue;
+    if (Wire.requestFrom(addr, (uint8_t)1) == 1)
+      return Wire.read();
+  }
   return 0xFF;
 }
 
@@ -118,10 +123,15 @@ void readInputs() {
   mainButtons = ~port0;  // Invert: 1 = pressed
   
   // Read extender PCA9555 buttons (active low, invert)
-  port0 = pca9555_read(PCA9555_EXT_ADDR, PCA9555_REG_INPUT0);
-  port1 = pca9555_read(PCA9555_EXT_ADDR, PCA9555_REG_INPUT1);
-  extButtons0 = ~port0;  // Invert: 1 = pressed
-  extButtons1 = ~port1;  // Invert: 1 = pressed
+  if (pcaExtAddr != 0) {
+    port0 = pca9555_read(pcaExtAddr, PCA9555_REG_INPUT0);
+    port1 = pca9555_read(pcaExtAddr, PCA9555_REG_INPUT1);
+    extButtons0 = ~port0;  // Invert: 1 = pressed
+    extButtons1 = ~port1;  // Invert: 1 = pressed
+  } else {
+    extButtons0 = 0;
+    extButtons1 = 0;
+  }
   
   // Control optocoupler based on specific button: P0_6 on extender (bit 6 of extButtons0 = 0x40)
   bool optoButton = (extButtons0 & 0x40) != 0;
@@ -158,7 +168,7 @@ void sendHeartbeat() {
   data[4] = (uint8_t)(g_can->getRxCount() & 0xFF);
   data[5] = (uint8_t)(g_can->getTxCount() & 0xFF);
   data[6] = optoActive ? 0x01 : 0x00;  // Opto status
-  data[7] = 0;
+  data[7] = HB_TYPE_JOYSTICK_UNIFIED;   // capability announcement
   g_can->sendBroadcast(PF_HEARTBEAT, data, 8, 6);
 }
 
@@ -172,6 +182,24 @@ void processCAN() {
       setOpto(msg.data[0] != 0);
     }
   }
+}
+
+void i2c_scan() {
+  Serial.println("--- I2C bus scan ---");
+  uint8_t count = 0;
+  for (uint8_t addr = 1; addr < 127; addr++) {
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) {
+      Serial.printf("  Device at 0x%02X", addr);
+      if (addr >= 0x48 && addr <= 0x4B) Serial.print(" (ADS1115)");
+      else if (addr == PCA9555_MAIN_ADDR) Serial.print(" (PCA9555 main)");
+      else if (addr >= 0x21 && addr <= 0x23) Serial.print(" (PCA9555 extender)");
+      Serial.println();
+      count++;
+    }
+  }
+  if (count == 0) Serial.println("  No devices found!");
+  Serial.printf("  Total: %d device(s)\n", count);
 }
 
 void setup() {
@@ -192,6 +220,9 @@ void setup() {
   Wire.begin(I2C_SDA, I2C_SCL);
   Wire.setClock(400000);
   
+  // Scan the I2C bus and show all detected devices
+  i2c_scan();
+  
   // Initialize ADS1115
   if (!ads.begin(0x48)) {
     Serial.println("ADS1115 NOT found!");
@@ -211,12 +242,22 @@ void setup() {
   pinMode(OPTO_PIN, OUTPUT);
   digitalWrite(OPTO_PIN, LOW);
   
-  // Initialize extender PCA9555 @ 0x21 (all inputs)
-  pca9555_write(PCA9555_EXT_ADDR, PCA9555_REG_CONFIG0, 0xFF);  // Port 0 all inputs
-  pca9555_write(PCA9555_EXT_ADDR, PCA9555_REG_CONFIG1, 0xFF);  // Port 1 all inputs
-  pca9555_write(PCA9555_EXT_ADDR, PCA9555_REG_OUTPUT0, 0xFF);  // Pull-ups on port 0
-  pca9555_write(PCA9555_EXT_ADDR, PCA9555_REG_OUTPUT1, 0xFF);  // Pull-ups on port 1
-  Serial.println("Extender PCA9555 @ 0x21 OK");
+  // Detect extender PCA9555 (0x21-0x23 depending on A0/A1/A2 strapping)
+  for (uint8_t addr = 0x21; addr <= 0x23; addr++) {
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) {
+      pcaExtAddr = addr;
+      pca9555_write(addr, PCA9555_REG_CONFIG0, 0xFF);  // Port 0 all inputs
+      pca9555_write(addr, PCA9555_REG_CONFIG1, 0xFF);  // Port 1 all inputs
+      pca9555_write(addr, PCA9555_REG_OUTPUT0, 0xFF);  // Pull-ups on port 0
+      pca9555_write(addr, PCA9555_REG_OUTPUT1, 0xFF);  // Pull-ups on port 1
+      Serial.printf("Extender PCA9555 OK @ 0x%02X\n", addr);
+      break;
+    }
+  }
+  if (pcaExtAddr == 0) {
+    Serial.println("WARNING: no extender PCA9555 found at 0x21-0x23");
+  }
   
   // Initialize CAN
   g_can = new ForwarderCAN(JOYSTICK_ADDR, ECU_NAME);
@@ -227,18 +268,24 @@ void setup() {
   Serial.printf("CAN Ready on 0x%02X\n", JOYSTICK_ADDR);
   
   digitalWrite(LED1_PIN, LOW);  // LED off = ready
+
+  // Auto-reset watchdog: if the loop stops for 8s (e.g. I2C bus wedges)
+  // the chip resets itself instead of sitting dead until a manual reset
+  esp_task_wdt_init(8, true);
+  esp_task_wdt_add(NULL);
 }
 
 void loop() {
   uint32_t now = millis();
+  esp_task_wdt_reset();  // Feed the auto-reset watchdog
   
   g_can->loop();
   processCAN();
-  readInputs();
   
-  // Send data at 25Hz (40ms)
+  // Read inputs and send data at 25Hz (40ms)
   if (now - lastSend >= 40) {
     lastSend = now;
+    readInputs();
     sendPot(PF_JOYSTICK_POT1, pot1);
     sendPot(PF_JOYSTICK_POT2, pot2);
     sendPot(PF_JOYSTICK_POT3, pot3);

@@ -42,6 +42,8 @@
 #define PF_JOYSTICK_POT3 0x12
 #define PF_JOYSTICK_POT4 0x14
 #define PF_JOYSTICK_BUTTONS 0x13
+#define PF_EXTENDER_BUTTONS 0x15  // Extender PCA9555 buttons byte 0
+#define PF_EXTENDER_BUTTONS2 0x16 // Extender PCA9555 buttons byte 1
 #define PF_LED_COLOR 0x20
 #define PF_SOLENOID_CMD 0x21
 #define PF_IDENTIFY 0x22
@@ -52,6 +54,12 @@
 #define PF_HEARTBEAT 0x30
 #define PF_MOTOR_OUTPUT1 0x31
 #define PF_MOTOR_OUTPUT2 0x32
+
+// Device type codes, carried in heartbeat data[7] (capability announcement)
+#define HB_TYPE_NONE 0x00
+#define HB_TYPE_MOTOR_DRIVER 0x01
+#define HB_TYPE_JOYSTICK_LEGACY 0x02 // 2 pots, 4 buttons
+#define HB_TYPE_JOYSTICK_UNIFIED 0x03 // 4 pots, 8 main + 16 extender buttons
 
 // Broadcast destination address
 #define DA_BROADCAST 0xFF

@@ -255,7 +255,7 @@ static void sendHeartbeat() {
   data[4] = (uint8_t)(g_can->getRxCount() & 0xFF);
   data[5] = (uint8_t)(g_can->getTxCount() & 0xFF);
   data[6] = 0;
-  data[7] = 0;
+  data[7] = HB_TYPE_JOYSTICK_LEGACY; // capability announcement
   g_can->sendBroadcast(PF_HEARTBEAT, data, 8, 6);
 }
 

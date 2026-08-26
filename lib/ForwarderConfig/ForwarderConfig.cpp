@@ -213,6 +213,18 @@ bool ForwarderConfig::saveAxisConfig(uint8_t axisIdx, const AxisConfig &axis) {
   return true;
 }
 
+bool ForwarderConfig::hasAxisConfig() {
+  if (!_started)
+    return false;
+  for (int i = 0; i < MAX_AXIS_COUNT; i++) {
+    char key[12];
+    snprintf(key, sizeof(key), "axis_%d", i);
+    if (_prefs.isKey(key))
+      return true;
+  }
+  return false;
+}
+
 bool ForwarderConfig::loadCanOutputRules(
     CanOutputRule rules[MAX_CAN_OUTPUT_RULES]) {
   if (!_started) {
@@ -360,9 +372,12 @@ bool ForwarderConfig::loadButtonOutputRules(
     if (_prefs.isKey(key)) {
       size_t len = _prefs.getBytesLength(key);
       if (len >= 6) {
-        uint8_t buf[8];
+        uint8_t buf[8] = {0};
         _prefs.getBytes(key, buf, sizeof(buf));
         rules[i].unpack(buf);
+        // Mode 0 with target 0 is a no-op; older saves could store 0
+        if (rules[i].btnMode == 0 && rules[i].pwmTarget == 0)
+          rules[i].pwmTarget = 255;
       }
     } else {
       rules[i].enabled = false;
@@ -384,8 +399,29 @@ bool ForwarderConfig::saveButtonOutputRule(uint8_t index,
   snprintf(key, sizeof(key), "btnrule_%d", index);
   uint8_t buf[8];
   rule.pack(buf);
-  _prefs.putBytes(key, buf, 8);
+  size_t written = _prefs.putBytes(key, buf, 8);
+  if (written != 8) {
+    Serial.printf("[Config] btnrule_%d SAVE FAILED (wrote %d bytes)\n", index,
+                  (int)written);
+    return false;
+  }
+  // Read-back verification: catch silent NVS write corruption
+  uint8_t rb[8] = {0};
+  _prefs.getBytes(key, rb, sizeof(rb));
+  if (memcmp(buf, rb, 8) != 0) {
+    Serial.printf("[Config] btnrule_%d VERIFY FAILED (read-back mismatch)\n",
+                  index);
+    return false;
+  }
   return true;
+}
+
+bool ForwarderConfig::hasButtonRules() {
+  if (!_started)
+    return false;
+  // Rules were saved at least once if the first rule key exists (the save
+  // handler always writes all slots, disabled ones included)
+  return _prefs.isKey("btnrule_0");
 }
 
 // ---------------------------------------------------------------------------

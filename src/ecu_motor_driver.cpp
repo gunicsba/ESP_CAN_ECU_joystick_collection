@@ -13,6 +13,7 @@
 #include <Adafruit_PWMServoDriver.h>
 #include <NeoPixelBus.h>
 #include <Wire.h>
+#include "esp_task_wdt.h"
 
 #ifndef CAN_TX_PIN
 #define CAN_TX_PIN 5
@@ -34,6 +35,10 @@
 #endif
 #ifndef SAFETY_TIMEOUT_MS
 #define SAFETY_TIMEOUT_MS 500
+#endif
+// Task watchdog: auto-reset if loop() wedges (I2C hang, etc.)
+#ifndef WATCHDOG_TIMEOUT_S
+#define WATCHDOG_TIMEOUT_S 8
 #endif
 #ifndef WS2812_PIN
 #define WS2812_PIN 48
@@ -87,8 +92,11 @@ static bool identifyActive = false;
 
 uint16_t g_joyPots[256][4] = {{0}};
 uint8_t g_joyButtons[256] = {0};
+uint8_t g_extButtons0[256] = {0}; // Extender PCA9555 port 0 buttons
+uint8_t g_extButtons1[256] = {0}; // Extender PCA9555 port 1 buttons
 uint32_t g_joyUpdateTime[256] = {0};
 uint32_t g_joyButtonUpdateTime[256] = {0};
+uint32_t g_extButtonUpdateTime[256] = {0};
 CanOutputRule g_canOutputRules[MAX_CAN_OUTPUT_RULES];
 ButtonOutputRule g_btnOutputRules[MAX_BUTTON_OUTPUT_RULES];
 CustomCanButton g_customCanButtons[MAX_CUSTOM_CAN_BUTTONS];
@@ -109,6 +117,9 @@ uint32_t g_lastJoyCmd = 0;
 // Tracks which output channels are being driven by web joy buttons
 // (so updateAxes skips them to prevent flickering)
 bool g_joyOverrideChannels[16] = {false};
+// Channels currently driven by Button Mapping rules (rules win over axes
+// while the mapped button is held)
+static bool g_ruleDrivenChannels[16] = {false};
 
 static const uint8_t ECU_NAME[8] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, (ECU_NAME_MOTOR_DRIVER & 0xFF)};
@@ -128,6 +139,7 @@ static uint16_t lastPWM[32] = {0};
 static uint32_t lastPWMDebug = 0;
 static void setPWMTracked(uint8_t channel, uint16_t value) {
   if (channel < 32 && value != lastPWM[channel]) {
+    Serial.printf("[PWM] ch%d %d -> %d\n", channel, lastPWM[channel], value);
     lastPWM[channel] = value;
     g_outputDirty = true;
     if (millis() - lastPWMDebug >= 2000) {
@@ -259,9 +271,26 @@ static uint32_t lastAxisDebug = 0;
 static bool isAxisGateActive(const AxisConfig &axis) {
   if (axis.buttonGate == BUTTON_GATE_NONE)
     return true;
-  uint8_t btnByte = g_joyButtons[axis.sourceAddress];
+  
+  bool btnPressed = false;
   int btnIdx = (axis.buttonGate - 1) / 2;
-  bool btnPressed = (btnByte >> btnIdx) & 0x01;
+  
+  // Check button based on source address range
+  if (axis.sourceAddress >= 0x80) {
+    // Unified joystick: 0-7 main PCA9555, 8-15 extender port0, 16-23 port1
+    if (btnIdx < 8) {
+      btnPressed = (g_joyButtons[axis.sourceAddress] >> btnIdx) & 0x01;
+    } else if (btnIdx < 16) {
+      btnPressed = (g_extButtons0[axis.sourceAddress] >> (btnIdx - 8)) & 0x01;
+    } else {
+      btnPressed = (g_extButtons1[axis.sourceAddress] >> (btnIdx - 16)) & 0x01;
+    }
+  } else {
+    // Regular joystick buttons
+    uint8_t btnByte = g_joyButtons[axis.sourceAddress];
+    btnPressed = (btnByte >> btnIdx) & 0x01;
+  }
+  
   bool wantPressed =
       ((axis.buttonGate - 1) % 2) == 0; // odd gate values (1,3,5,7) = pressed
   return btnPressed == wantPressed;
@@ -270,11 +299,13 @@ static bool isAxisGateActive(const AxisConfig &axis) {
 static void zeroAxisChannels(const AxisConfig &axis) {
   uint8_t chFwd = axis.outputChannel;
   uint8_t chRev = axis.outputChannel + 1;
-  if (g_solenoidValues[chFwd] != 0) {
+  // Never zero channels driven by web virtual buttons (they have priority)
+  if (!g_joyOverrideChannels[chFwd] && g_solenoidValues[chFwd] != 0) {
     g_solenoidValues[chFwd] = 0;
     setPWMTracked(chFwd, 0);
   }
-  if (axis.isBidirectional() && g_solenoidValues[chRev] != 0) {
+  if (axis.isBidirectional() && !g_joyOverrideChannels[chRev] &&
+      g_solenoidValues[chRev] != 0) {
     g_solenoidValues[chRev] = 0;
     setPWMTracked(chRev, 0);
   }
@@ -333,19 +364,24 @@ static void updateAxes() {
       mapAxis(axis, pot, fwd, rev);
       uint8_t chFwd = axis.outputChannel;
       uint8_t chRev = axis.outputChannel + 1;
-      // Skip channels being driven by web joy buttons (they have priority)
-      if (!g_joyOverrideChannels[chFwd] && fwd != g_solenoidValues[chFwd]) {
+      // Skip channels driven by web joy buttons or button rules (priority)
+      if (!g_joyOverrideChannels[chFwd] && !g_ruleDrivenChannels[chFwd] &&
+          fwd != g_solenoidValues[chFwd]) {
         g_solenoidValues[chFwd] = fwd;
         setPWMTracked(chFwd, fwd);
       }
       if (axis.isBidirectional() && !g_joyOverrideChannels[chRev] &&
+          (chRev >= 16 || !g_ruleDrivenChannels[chRev]) &&
           rev != g_solenoidValues[chRev]) {
         g_solenoidValues[chRev] = rev;
         setPWMTracked(chRev, rev);
       }
     } else {
-      // Joystick timed out, zero both channels (unless joy-overridden)
-      if (!g_joyOverrideChannels[axis.outputChannel]) {
+      // Joystick timed out, zero both channels (unless joy/rule-driven)
+      if (!g_joyOverrideChannels[axis.outputChannel] &&
+          !g_ruleDrivenChannels[axis.outputChannel] &&
+          (axis.outputChannel >= 15 ||
+           !g_ruleDrivenChannels[axis.outputChannel + 1])) {
         zeroAxisChannels(axis);
       }
     }
@@ -374,6 +410,8 @@ static void processCustomCanButtons(const CANMessage &msg) {
 // Button-to-output processing
 // ---------------------------------------------------------------------------
 static void updateButtonOutputs() {
+  static bool lastRulePressed[MAX_BUTTON_OUTPUT_RULES] = {false};
+  bool chDriven[16] = {false};
   for (int i = 0; i < MAX_BUTTON_OUTPUT_RULES; i++) {
     const ButtonOutputRule &rule = g_btnOutputRules[i];
     if (!rule.enabled)
@@ -388,25 +426,76 @@ static void updateButtonOutputs() {
       if (customIdx < MAX_CUSTOM_CAN_BUTTONS) {
         pressed = g_customBtnStates[customIdx];
       }
+    } else if (rule.btnSourceSA >= 0x80) {
+      // Unified joystick: 0-7 main PCA9555, 8-15 extender port0, 16-23 port1
+      if (rule.btnIndex < 8) {
+        pressed = (g_joyButtons[rule.btnSourceSA] >> rule.btnIndex) & 0x01;
+      } else if (rule.btnIndex < 16) {
+        pressed = (g_extButtons0[rule.btnSourceSA] >> (rule.btnIndex - 8)) & 0x01;
+      } else {
+        pressed = (g_extButtons1[rule.btnSourceSA] >> (rule.btnIndex - 16)) & 0x01;
+      }
     } else {
       // Physical joystick button
       uint8_t btnByte = g_joyButtons[rule.btnSourceSA];
       pressed = (btnByte >> rule.btnIndex) & 0x01;
     }
 
+    bool wasPressed = lastRulePressed[i];
+    if (pressed != lastRulePressed[i]) {
+      lastRulePressed[i] = pressed;
+      Serial.printf("[BtnRule %d] SA=0x%02X btn=%d -> %s (ch%d mode%d)\n", i,
+                    rule.btnSourceSA, rule.btnIndex, pressed ? "PRESSED" : "released",
+                    rule.outputChannel, rule.btnMode);
+    }
     if (pressed) {
-      uint16_t pwmVal;
-      if (rule.btnMode == 0) {
-        // Max PWM mode
-        pwmVal = ((uint16_t)rule.pwmTarget * 4095u) / 255u;
-      } else {
-        // Min PWM mode (goes to 0)
-        pwmVal = 0;
+      // Motor-pair semantics (like the virtual joystick):
+      // mode 0 = "+" drives the fwd channel, mode 1 = "-" drives rev (fwd+1)
+      uint8_t outCh = rule.outputChannel + ((rule.btnMode == 1) ? 1 : 0);
+      if (outCh >= 16)
+        continue;
+      // A stored target of 0 is a stale artifact - use 255
+      uint16_t target = rule.pwmTarget ? rule.pwmTarget : 255;
+      uint16_t pwmVal = (target * 4095u) / 255u;
+      // Always force the write while pressed: a stale value left in
+      // g_solenoidValues (e.g. channel owned by a silent axis) would
+      // otherwise make this press a silent no-op
+      if (g_solenoidValues[outCh] != pwmVal || !wasPressed) {
+        g_solenoidValues[outCh] = pwmVal;
+        setPWMTracked(outCh, pwmVal);
+        if (!wasPressed) {
+          Serial.printf("[BtnRule %d] OUT ch%d <- %d (target=%d)\n", i,
+                        outCh, pwmVal, rule.pwmTarget);
+        }
       }
-      if (g_solenoidValues[rule.outputChannel] != pwmVal) {
-        g_solenoidValues[rule.outputChannel] = pwmVal;
-        setPWMTracked(rule.outputChannel, pwmVal);
+      chDriven[outCh] = true;
+    }
+  }
+  bool prevRuleDriven[16];
+  memcpy(prevRuleDriven, g_ruleDrivenChannels, sizeof(prevRuleDriven));
+  memcpy(g_ruleDrivenChannels, chDriven, sizeof(chDriven));
+  // Release handling: momentary behavior - channels driven by rules last
+  // cycle but no longer pressed are switched off (like the virtual buttons).
+  // Skip channels owned by an enabled axis (the axis system drives them).
+  for (int ch = 0; ch < 16; ch++) {
+    if (!prevRuleDriven[ch] || chDriven[ch] || g_joyOverrideChannels[ch])
+      continue;
+    bool axisOwns = false;
+    for (int ax = 0; ax < MAX_AXIS_COUNT; ax++) {
+      const AxisConfig &a = g_motorCfg.axes[ax];
+      // Only a LIVE axis (recent source data) may keep the channel;
+      // a silent one must not hold a stale button value
+      if (a.isEnabled() && (a.outputChannel == ch || a.outputChannel + 1 == ch) &&
+          g_joyUpdateTime[a.sourceAddress] > 0 &&
+          millis() - g_joyUpdateTime[a.sourceAddress] < 1000) {
+        axisOwns = true;
+        break;
       }
+    }
+    if (!axisOwns && g_solenoidValues[ch] != 0) {
+      g_solenoidValues[ch] = 0;
+      setPWMTracked(ch, 0);
+      Serial.printf("[BtnRule] OUT ch%d <- 0 (released)\n", ch);
     }
   }
 }
@@ -466,7 +555,8 @@ static void processCAN() {
         if (pf == PF_JOYSTICK_POT4)
           potIdx = 3;
         uint16_t val = msg.data[0] | ((uint16_t)msg.data[1] << 8);
-        g_joyPots[sa][potIdx] = val;
+        // Scale 16-bit ADC (0-32767) to 10-bit (0-1023) for axis mapping
+        g_joyPots[sa][potIdx] = val >> 5;
         g_joyUpdateTime[sa] = millis();
         lastSolenoidUpdate = millis(); // Refresh safety timer on new CAN data
         blinkFast = true;
@@ -478,6 +568,26 @@ static void processCAN() {
       if (msg.len >= 1 && sa < 256) {
         g_joyButtons[sa] = msg.data[0];
         g_joyButtonUpdateTime[sa] = millis();
+      }
+      break;
+    }
+    case PF_EXTENDER_BUTTONS: {
+      if (msg.len >= 1 && sa < 256) {
+        if (g_extButtons0[sa] != msg.data[0]) {
+          Serial.printf("[ExtBtn] SA=0x%02X port0=0x%02X\n", sa, msg.data[0]);
+        }
+        g_extButtons0[sa] = msg.data[0];
+        g_extButtonUpdateTime[sa] = millis();
+      }
+      break;
+    }
+    case PF_EXTENDER_BUTTONS2: {
+      if (msg.len >= 1 && sa < 256) {
+        if (g_extButtons1[sa] != msg.data[0]) {
+          Serial.printf("[ExtBtn] SA=0x%02X port1=0x%02X\n", sa, msg.data[0]);
+        }
+        g_extButtons1[sa] = msg.data[0];
+        g_extButtonUpdateTime[sa] = millis();
       }
       break;
     }
@@ -570,7 +680,7 @@ static void sendHeartbeat() {
   data[4] = (uint8_t)(g_can->getTxCount() & 0xFF);
   data[5] = g_pca2Present ? 16 : 8;
   data[6] = g_motorCfg.pcaCount;
-  data[7] = 0;
+  data[7] = HB_TYPE_MOTOR_DRIVER; // capability announcement
   g_can->sendBroadcast(PF_HEARTBEAT, data, 8, 6);
 }
 
@@ -636,6 +746,41 @@ static void autoConfigDefaults() {
   Serial.println("[MotorDriver] Default joystick labels saved to NVS");
 
   Serial.println("[MotorDriver] Default config saved to NVS");
+}
+
+// ---------------------------------------------------------------------------
+// Default button mapping (unified joystick @ 0x80, Ext N = button index N+7)
+// Applied on first boot / when no enabled rules exist, then saved to NVS
+// ---------------------------------------------------------------------------
+static void defaultButtonRules() {
+  struct {
+    uint8_t pair;   // motor pair index 0-7
+    uint8_t posBtn; // "+" button index (drives fwd channel)
+    uint8_t negBtn; // "-" button index (drives rev channel)
+  } defaults[] = {
+      {0, 11, 13}, // Out 1: Ext 4 / Ext 6
+      {1, 9, 10},  // Out 2: Ext 2 / Ext 3
+      {2, 17, 16}, // Out 3: Ext 10 / Ext 9
+      {3, 15, 12}, // Out 4: Ext 8 / Ext 5
+      {4, 18, 21}, // Out 5: Ext 11 / Ext 14
+      {5, 19, 20}, // Out 6: Ext 12 / Ext 13
+  };
+  Serial.println("[MotorDriver] Applying default button mapping...");
+  int idx = 0;
+  for (int d = 0; d < 6 && idx < MAX_BUTTON_OUTPUT_RULES - 1; d++) {
+    for (int dir = 0; dir < 2; dir++) {
+      ButtonOutputRule r;
+      r.enabled = true;
+      r.outputChannel = defaults[d].pair * 2;
+      r.btnSourceSA = 0x80;
+      r.btnIndex = (dir == 0) ? defaults[d].posBtn : defaults[d].negBtn;
+      r.btnMode = dir; // 0 = "+" fwd, 1 = "-" rev
+      r.pwmTarget = 255;
+      g_btnOutputRules[idx] = r;
+      cfgMgr.saveButtonOutputRule(idx, r);
+      idx++;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -840,8 +985,9 @@ void resumeUDP() {
 // Web joy buttons have priority over CAN joystick axis on the same channels.
 // ---------------------------------------------------------------------------
 static void processJoystickCommands() {
-  // Safety: auto-clear all joystick commands after 2s of no updates
-  if (g_lastJoyCmd > 0 && millis() - g_lastJoyCmd > 2000) {
+  // Safety: auto-clear all joystick commands after 5s of no updates
+  // (web UI keep-alive heartbeat runs every 1s)
+  if (g_lastJoyCmd > 0 && millis() - g_lastJoyCmd > 5000) {
     for (int i = 0; i < MAX_JOY_FUNCTIONS; i++) {
       g_joyCmdActive[i] = false;
     }
@@ -897,6 +1043,32 @@ static void processJoystickCommands() {
     g_solenoidValues[outCh] = pwmValue;
     g_joyOverrideChannels[outCh] = true;
   }
+
+  // Release handling: zero channels driven in the previous cycle that are
+  // no longer commanded (momentary behavior, also with all axes disabled).
+  // Never zero a channel another live subsystem owns (button rules, axes).
+  static bool prevOverride[16] = {false};
+  for (int ch = 0; ch < 16; ch++) {
+    bool ruleDriven = g_ruleDrivenChannels[ch];
+    bool axisLive = false;
+    for (int ax = 0; ax < MAX_AXIS_COUNT; ax++) {
+      const AxisConfig &a = g_motorCfg.axes[ax];
+      if (!a.isEnabled() || a.sourceAddress == 0)
+        continue;
+      if ((a.outputChannel == ch || a.outputChannel + 1 == ch) &&
+          g_joyUpdateTime[a.sourceAddress] > 0 &&
+          millis() - g_joyUpdateTime[a.sourceAddress] < 1000) {
+        axisLive = true;
+        break;
+      }
+    }
+    if (prevOverride[ch] && !g_joyOverrideChannels[ch] && !ruleDriven &&
+        !axisLive && g_solenoidValues[ch] != 0) {
+      g_solenoidValues[ch] = 0;
+      setPWMTracked(ch, 0);
+    }
+    prevOverride[ch] = g_joyOverrideChannels[ch];
+  }
 }
 
 void ecu_setup() {
@@ -917,11 +1089,27 @@ void ecu_setup() {
   cfgMgr.loadMotorConfig(g_motorCfg);
   cfgMgr.loadCanOutputRules(g_canOutputRules);
   cfgMgr.loadButtonOutputRules(g_btnOutputRules);
+  {
+    int n = 0;
+    for (int i = 0; i < MAX_BUTTON_OUTPUT_RULES; i++)
+      if (g_btnOutputRules[i].enabled)
+        n++;
+    Serial.printf("[MotorDriver] Loaded %d button rule(s) from NVS\n", n);
+    // Defaults only when rules were NEVER saved (key existence, not content -
+    // an intentionally cleared mapping must survive reboot)
+    if (!cfgMgr.hasButtonRules()) {
+      defaultButtonRules();
+    }
+  }
   cfgMgr.loadCustomCanButtons(g_customCanButtons);
   cfgMgr.loadJoystickLabels(g_joyLabels);
   cfgMgr.loadOutputLabels(g_outLabels);
   cfgMgr.loadJoystickMappings(g_joyMappings);
-  autoConfigDefaults();
+  // Only apply factory defaults on a genuinely fresh flash (no axis config
+  // ever saved). An intentionally all-disabled config must survive reboot.
+  if (!cfgMgr.hasAxisConfig()) {
+    autoConfigDefaults();
+  }
 
   // Set default joy mappings if not configured (all channels 0 after flash
   // erase) Check if pair 0 pos is still at default (ch 0) and pair 1 is also at
@@ -1007,8 +1195,18 @@ void ecu_setup() {
 #endif
   Serial.println("[MotorDriver] Setup complete, entering loop...");
 
-  // Initialize WT5500 Ethernet after CAN is up
+  // Initialize WT5500 Ethernet after CAN is up (can be disabled to rule it
+  // out as a hang source: build with -DDISABLE_ETHERNET)
+#if !defined(DISABLE_ETHERNET)
   initEthernet();
+#else
+  Serial.println("[MotorDriver] Ethernet DISABLED by build flag");
+#endif
+
+  // Auto-reset watchdog: if the loop stops for WATCHDOG_TIMEOUT_S the chip
+  // resets itself instead of sitting dead until a manual reset
+  esp_task_wdt_init(WATCHDOG_TIMEOUT_S, true);
+  esp_task_wdt_add(NULL);
 }
 
 static uint32_t lastStatusPrint = 0;
@@ -1019,6 +1217,7 @@ static uint32_t loopCount = 0;
 void ecu_loop() {
   uint32_t now = millis();
   loopCount++;
+  esp_task_wdt_reset(); // Feed the auto-reset watchdog
 
   // Prioritize web server during OTA
 #if defined(ENABLE_OTA_WEBSERVER)
@@ -1041,7 +1240,9 @@ void ecu_loop() {
 #if defined(ENABLE_OTA_WEBSERVER)
   if (!ota_is_active()) {
 #endif
+#if !defined(DISABLE_ETHERNET)
     processUDP();
+#endif
     yield();
     updateAxes();
     updateButtonOutputs();
@@ -1085,15 +1286,20 @@ void ecu_loop() {
                     g_can->isOnline() ? 1 : 0, g_can->getTxCount(),
                     g_can->getRxCount(), g_can->getErrorCount());
     }
-    if (now - lastSolenoidUpdate > SAFETY_TIMEOUT_MS) {
-      if (lastSolenoidUpdate != 0) {
-        Serial.printf(
-            "[SAFETY] Timeout %lums since last update, all outputs OFF\n",
-            (unsigned long)(now - lastSolenoidUpdate));
-        allOff("safety");
-        lastSolenoidUpdate =
-            0; // Prevent re-firing until fresh CAN data arrives
-      }
+    // Web virtual joystick commands count as live operator input:
+    // keep the safety timer fresh while they are being sent
+    if (g_lastJoyCmd > 0 && g_lastJoyCmd > lastSolenoidUpdate) {
+      lastSolenoidUpdate = g_lastJoyCmd;
+    }
+    if (lastSolenoidUpdate != 0 && now > lastSolenoidUpdate &&
+        now - lastSolenoidUpdate > SAFETY_TIMEOUT_MS) {
+      Serial.printf("[SAFETY] No CAN data for %lums, all outputs OFF "
+                    "(last=%lu now=%lu)\n",
+                    (unsigned long)(now - lastSolenoidUpdate),
+                    (unsigned long)lastSolenoidUpdate, (unsigned long)now);
+      allOff("safety");
+      lastSolenoidUpdate =
+          0; // Prevent re-firing until fresh CAN data arrives
     }
     if (blinkFast && (now - blinkTimer > 100)) {
       blinkFast = false;

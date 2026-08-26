@@ -84,6 +84,8 @@ h1 { margin: 0; font-size: 1.2rem; color: #38bdf8; }
 }
 .tab.active { color: #38bdf8; border-bottom-color: #38bdf8; }
 .tab:hover { color: #e2e8f0; }
+.subtab-bar { padding: 0 24px 0; background: #16212e; }
+.subtab { font-size: 0.85rem; padding: 8px 14px; }
 .panel { display: none; padding: 20px 24px; max-width: 1200px; }
 .panel.active { display: block; }
 .card {
@@ -98,6 +100,7 @@ h1 { margin: 0; font-size: 1.2rem; color: #38bdf8; }
 @media (max-width: 800px) {
     .grid2 { grid-template-columns: 1fr; }
     .tabs { padding: 8px 12px 0; gap: 2px; }
+    .subtab-bar { padding: 0 12px; }
     .tab { padding: 8px 12px; font-size: 0.8rem; }
     .panel { padding: 12px; }
     .card { padding: 12px; }
@@ -214,18 +217,25 @@ input[type="range"] {
     </div>
 </header>
 <div class="tabs">
-    <button class="tab active" onclick="switchTab('joystick')">Joystick</button>
-    <button class="tab" onclick="switchTab('dash')">Dashboard</button>
-    <button class="tab" onclick="switchTab('modules')">Modules</button>
-    <button class="tab" onclick="switchTab('mapping')">Motor Mapping</button>
-    <button class="tab" onclick="switchTab('labels')">Labels</button>
-    <button class="tab" onclick="switchTab('btnout')">Button Outputs</button>
-    <button class="tab" onclick="switchTab('canbtns')">CAN Buttons</button>
-    <button class="tab" onclick="switchTab('dbtune')">Deadband</button>
-    <button class="tab" onclick="switchTab('canout')">CAN Output</button>
-    <button class="tab" onclick="switchTab('mottest')">Motor Test</button>
-    <button class="tab" onclick="switchTab('led')">LED Test</button>
-    <button class="tab" onclick="switchTab('ota')">OTA Update</button>
+    <button class="tab grp active" onclick="switchGroup('grpJoy',this)">Joystick</button>
+    <button class="tab grp" onclick="switchGroup('grpDash',this)">Dashboard</button>
+    <button class="tab grp" onclick="switchGroup('grpSys',this)">System</button>
+</div>
+<div class="tabs subtab-bar" id="grpJoy-sub">
+    <button class="tab subtab active" onclick="switchTab('joystick',this)">Virtual Buttons</button>
+    <button class="tab subtab" onclick="switchTab('mapping',this)">Joystick Mapping</button>
+    <button class="tab subtab" onclick="switchTab('labels',this)">Joystick Labels</button>
+    <button class="tab subtab" onclick="switchTab('dbtune',this)">Joystick Deadband</button>
+    <button class="tab subtab" onclick="switchTab('btnout',this)">Button Mapping</button>
+</div>
+<div class="tabs subtab-bar" id="grpDash-sub" style="display:none">
+    <button class="tab subtab active" onclick="switchTab('dash',this)">Dashboard</button>
+</div>
+<div class="tabs subtab-bar" id="grpSys-sub" style="display:none">
+    <button class="tab subtab active" onclick="switchTab('modules',this)">Modules</button>
+    <button class="tab subtab" onclick="switchTab('mottest',this)">Motor Test</button>
+    <button class="tab subtab" onclick="switchTab('led',this)">LED Test</button>
+    <button class="tab subtab" onclick="switchTab('ota',this)">OTA Update</button>
 </div>
 
 <div id="joystick" class="panel active">
@@ -286,6 +296,10 @@ input[type="range"] {
 </div>
 
 <div id="dash" class="panel">
+    <div class="card" style="padding:10px;margin-bottom:16px">
+        <h3 style="margin:0 0 8px">Physical Joystick (live)</h3>
+        <div id="physJoyList" style="color:#64748b;font-size:0.85rem">Waiting for data...</div>
+    </div>
     <div class="grid2">
         <div class="card">
             <h3>Joystick 1 (0x21)</h3>
@@ -309,6 +323,10 @@ input[type="range"] {
             <div id="joy4_pots"></div>
             <div class="info-row"><span>Buttons:</span><span id="joy4_btns">--</span></div>
         </div>
+    </div>
+    <div class="card">
+        <h3>Joystick 5 (Unified, 24 buttons)</h3>
+        <div id="joyUnifiedList" style="color:#64748b;font-size:0.85rem">No unified joystick on bus</div>
     </div>
     <div class="card">
         <h3>Solenoid Outputs</h3>
@@ -340,15 +358,6 @@ input[type="range"] {
         <div style="margin-top:12px;display:flex;gap:8px;">
             <button onclick="saveMapping()">Save to Motor Driver</button>
             <button class="secondary" onclick="loadMapping()">Refresh</button>
-        </div>
-    </div>
-    <div class="card" style="margin-top:16px">
-        <h3>Virtual Joystick Assignment</h3>
-        <p style="color:#94a3b8;font-size:0.85rem;margin:0 0 12px">Assign each virtual joystick function to an output pair. These buttons on the Joystick tab will directly drive the assigned outputs.</p>
-        <div id="joyAssignList"></div>
-        <div style="margin-top:12px;display:flex;gap:8px;">
-            <button onclick="saveJoyAssign()">Save</button>
-            <button class="secondary" onclick="fetchJoyAssign()">Refresh</button>
         </div>
     </div>
 </div>
@@ -454,12 +463,18 @@ input[type="range"] {
         <p style="color:#94a3b8;font-size:0.85rem;margin:0 0 12px">Map buttons to PWM outputs. Each output has a "+" (maxPWM) and "-" (minPWM) direction for bidirectional control.</p>
         <div id="btnOutList"></div>
     </div>
-</div>
-
-<div id="canbtns" class="panel">
     <div class="card">
-        <h3>Custom CAN Buttons</h3>
-        <p style="color:#94a3b8;font-size:0.85rem;margin:0 0 12px">Define virtual buttons triggered by specific CAN messages. Each button matches a CAN ID + byte + bit. These can be assigned to outputs in Button Outputs.</p>
+        <h3>Virtual Joystick Assignment</h3>
+        <p style="color:#94a3b8;font-size:0.85rem;margin:0 0 12px">Assign each virtual joystick function to an output pair. These buttons on the Virtual Buttons page will directly drive the assigned outputs.</p>
+        <div id="joyAssignList"></div>
+        <div style="margin-top:12px;display:flex;gap:8px;">
+            <button onclick="saveJoyAssign()">Save</button>
+            <button class="secondary" onclick="fetchJoyAssign()">Refresh</button>
+        </div>
+    </div>
+    <div class="card">
+        <h3>Virtual CAN Buttons</h3>
+        <p style="color:#94a3b8;font-size:0.85rem;margin:0 0 12px">Define virtual buttons triggered by specific CAN messages. Each button matches a CAN ID + byte + bit. These can be assigned to outputs in the rules above.</p>
         <div id="customBtnList"></div>
         <div style="margin-top:12px;display:flex;gap:8px;">
             <button onclick="saveCustomBtns()">Save</button>
@@ -493,10 +508,28 @@ function setStatus(msg, type) {
     setTimeout(() => s.className = '', 3000);
 }
 
-function switchTab(name) {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+const GROUP_DEFAULT = { grpJoy: 'joystick', grpDash: 'dash', grpSys: 'modules' };
+function switchGroup(grp, el) {
+    document.querySelectorAll('.tab.grp').forEach(t => t.classList.remove('active'));
+    if (el) el.classList.add('active');
+    document.querySelectorAll('.subtab-bar').forEach(b => b.style.display = 'none');
+    const bar = document.getElementById(grp + '-sub');
+    if (bar) bar.style.display = 'flex';
+    // Activate the group's default subtab
+    const defTab = bar ? bar.querySelector('.subtab') : null;
+    if (defTab) {
+        const panel = defTab.getAttribute('onclick').match(/'([^']+)'/)[1];
+        switchTab(panel, defTab);
+    } else {
+        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+        document.getElementById(GROUP_DEFAULT[grp]).classList.add('active');
+    }
+}
+
+function switchTab(name, el) {
+    document.querySelectorAll('.tab.subtab').forEach(t => t.classList.remove('active'));
+    if (el) el.classList.add('active');
     document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-    event.target.classList.add('active');
     document.getElementById(name).classList.add('active');
 }
 
@@ -518,17 +551,13 @@ const joyCombined = {
     'mindketto-csuk': ['fokeret-csuk', 'segedkeret-csuk']
 };
 
-// Global abort controller for joy commands to prevent queuing
-let joyAbortController = null;
+// Joystick command keep-alive state
 let joyHeartbeatTimer = null;
 
 function joySendCmd(cmd, active) {
-    // Abort any pending request to prevent queuing
-    if (joyAbortController) {
-        joyAbortController.abort();
-    }
-    joyAbortController = new AbortController();
-    
+    // Note: requests are NOT aborted on new sends - aborting the keep-alive
+    // heartbeat mid-flight created gaps that let the firmware timeout clear
+    // the command, causing output flicker while holding a button.
     // Handle combined commands
     if (joyCombined[cmd]) {
         joyCombined[cmd].forEach(c => joySendSingle(c, active));
@@ -541,12 +570,9 @@ function joySendSingle(cmd, active) {
     fetch('/api/joycmd', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({cmd: cmd, active: active}),
-        signal: joyAbortController.signal
+        body: JSON.stringify({cmd: cmd, active: active})
     }).catch(e => {
-        if (e.name !== 'AbortError') {
-            console.error('joycmd err', e);
-        }
+        console.error('joycmd err', e);
     });
 }
 
@@ -613,6 +639,75 @@ function renderJoysticks() {
         for (let b = 0; b < 4; b++) { if (joy.btns & (1 << b)) btnStr += (btnStr ? ' ' : '') + btnNames[b]; }
         document.getElementById('joy' + (ji+1) + '_btns').textContent = btnStr || 'None';
     }
+    renderUnifiedJoyCards();
+}
+
+// Shared per-joystick card: pots + button grid with live highlight
+function buildJoyCardHtml(src, joy, idPrefix, isUnified) {
+    const nBtn = isUnified ? 24 : 4;
+    const online = (joy.age || 0) < 3;
+    let lbl = '';
+    for (const jl of gLabels.joysticks) {
+        if (jl && jl.sourceAddress === src) { lbl = jl.position || ''; break; }
+    }
+    let h = '<div style="margin-bottom:10px;padding:8px;background:#0f172a;border-radius:8px">';
+    h += '<div style="display:flex;justify-content:space-between;margin-bottom:6px">';
+    h += '<span style="font-weight:700;color:#38bdf8">' + (lbl || 'Joystick') + ' (0x' + src.toString(16).toUpperCase() + ')</span>';
+    h += '<span style="color:' + (online ? '#22c55e' : '#ef4444') + ';font-size:0.75rem;font-weight:700">' + (online ? 'ONLINE' : 'NO DATA') + '</span></div>';
+    for (let i = 0; i < 4; i++) h += barHtml(idPrefix + src + 'p' + i, 'Pot ' + (i+1), joy.pots[i] || 0, 1023, 'linear-gradient(90deg,#f59e0b,#fbbf24)');
+    h += '<div style="display:grid;grid-template-columns:repeat(' + (isUnified ? 8 : 4) + ',1fr);gap:5px;margin-top:6px">';
+    for (let b = 0; b < nBtn; b++) {
+        let pressed;
+        if (b < 8) pressed = joy.btns & (1 << b);
+        else pressed = joy.ext && (joy.ext[b < 16 ? 0 : 1] & (1 << ((b - 8) & 7)));
+        const bg = pressed ? 'linear-gradient(180deg,#22c55e,#15803d)' : '#1a2332';
+        const clr = pressed ? '#fff' : '#94a3b8';
+        const brd = pressed ? '1px solid #22c55e' : '1px solid #334155';
+        const name = isUnified ? (b < 8 ? ('M' + (b+1)) : ('E' + (b-7))) : ('B' + (b+1));
+        h += '<div style="min-height:34px;border-radius:8px;background:' + bg + ';border:' + brd + ';color:' + clr + ';display:flex;align-items:center;justify-content:center;font-size:0.7rem;font-weight:800">' + name + '</div>';
+    }
+    h += '</div>';
+    if (isUnified) h += '<div style="color:#475569;font-size:0.65rem;margin-top:4px">M1-M8 = main buttons, E1-E16 = extender buttons</div>';
+    h += '</div>';
+    return h;
+}
+
+// Live monitor for physical joysticks on the bus (incl. unified 24-button type)
+function renderPhysicalJoy() {
+    const el = document.getElementById('physJoyList');
+    if (!el) return;
+    if (!gState.joy || Object.keys(gState.joy).length === 0) {
+        el.innerHTML = '<div style="color:#64748b;font-size:0.85rem">No joystick data on bus</div>';
+        return;
+    }
+    const srcs = Object.keys(gState.joy).map(Number).sort((a,b) => a - b);
+    let h = '';
+    for (const src of srcs) {
+        h += buildJoyCardHtml(src, gState.joy[src], 'pj', src >= 0x80);
+    }
+    el.innerHTML = h;
+}
+
+// Dashboard: cards for unified (24-button) joysticks, discovered via heartbeat
+// type so it keeps working if the joystick had to claim a different address
+function renderUnifiedJoyCards() {
+    const el = document.getElementById('joyUnifiedList');
+    if (!el) return;
+    const addrs = {};
+    const mods = gState.modules || {};
+    for (const addr in mods) if (mods[addr].type === 3) addrs[addr] = true;
+    if (gState.joy) for (const addr in gState.joy) if (Number(addr) >= 0x80) addrs[addr] = true;
+    const keys = Object.keys(addrs).map(Number).sort((a,b) => a - b);
+    if (keys.length === 0) {
+        el.innerHTML = '<div style="color:#64748b;font-size:0.85rem">No unified joystick on bus</div>';
+        return;
+    }
+    let h = '';
+    for (const src of keys) {
+        const joy = (gState.joy && gState.joy[src]) || { pots: [0,0,0,0], btns: 0, ext: [0,0], age: 9999 };
+        h += buildJoyCardHtml(src, joy, 'dj', true);
+    }
+    el.innerHTML = h;
 }
 
 function renderSol() {
@@ -714,7 +809,7 @@ function renderDeadbandTuning() {
         h += '<button class="db-btn p" onclick="adjDB(' + sa + ',' + pi + ',\'max\',10)">+10</button></div>';
         h += '</div></div>';
     }
-    if (!keys.length) h = '<div style="color:#64748b;text-align:center;padding:16px">No pots detected. Connect a joystick or configure axes in Motor Mapping.</div>';
+    if (!keys.length) h = '<div style="color:#64748b;text-align:center;padding:16px">No pots detected. Connect a joystick or configure axes in Joystick Mapping.</div>';
     document.getElementById('dbTuneList').innerHTML = h;
 }
 
@@ -802,7 +897,7 @@ function renderModules() {
     let rows = '';
     for (const addr in mods) {
         const m = mods[addr];
-        const type = m.type === 1 ? 'Motor' : (m.type === 2 ? 'Joystick' : 'Unknown');
+        const type = m.type === 1 ? 'Motor' : (m.type === 2 ? 'Joystick' : (m.type === 3 ? 'Joystick (unified)' : 'Unknown'));
         rows += `<tr>
             <td>0x${Number(addr).toString(16).toUpperCase().padStart(2,'0')}</td>
             <td>${type}</td>
@@ -996,6 +1091,7 @@ async function fetchState() {
         document.getElementById('errCount').textContent = gState.errCount;
         document.getElementById('uptime').textContent = gState.uptime + 's';
         renderJoysticks();
+        renderPhysicalJoy();
         renderDeadbandTuning();
         renderSol();
         renderModules();
@@ -1300,7 +1396,7 @@ async function fetchTestState() {
     }
 }
 
-setInterval(fetchState, 2000); // 0.5Hz polling with timeout protection
+setInterval(fetchState, 500); // 2Hz polling for responsive button highlighting
 fetchConfig().then(() => { fetchState(); fetchLabels(); });
 fetchCanOut();
 fetchTestState();
@@ -1453,45 +1549,46 @@ let gBtnRules = [];
 
 
 function renderBtnOutRules() {
-    // Convert flat rules into paired structure (one pair per output)
+    // Convert flat rules into paired structure: one card per MOTOR PAIR
+    // (8 motors, 2 PCA9685 channels each: fwd = base, rev = base+1)
     const pairs = [];
-    for (let o = 0; o < 16; o++) {
-        pairs.push({ out: o, posBtn: '0_0', negBtn: '0_0', posPwm: 255, negPwm: 255 });
+    for (let p = 0; p < 8; p++) {
+        pairs.push({ out: p * 2, posBtn: '0_0', negBtn: '0_0', posPwm: 255, negPwm: 255 });
     }
     for (let i = 0; i < gBtnRules.length; i++) {
         const r = gBtnRules[i];
         if (!r || !r.enabled) continue;
-        const ch = r.outputChannel;
-        if (ch < 0 || ch >= 16) continue;
+        const pi = Math.floor(r.outputChannel / 2); // pair index from fwd ch
+        if (pi < 0 || pi >= 8) continue;
         const srcVal = r.btnSourceSA + '_' + r.btnIndex;
         if (r.btnMode === 0) {
-            pairs[ch].posBtn = srcVal;
-            pairs[ch].posPwm = r.pwmTarget;
+            pairs[pi].posBtn = srcVal;
+            pairs[pi].posPwm = r.pwmTarget || 255;
         } else {
-            pairs[ch].negBtn = srcVal;
-            pairs[ch].negPwm = r.pwmTarget;
+            pairs[pi].negBtn = srcVal;
+            pairs[pi].negPwm = r.pwmTarget || 255;
         }
     }
     let h = '';
-    for (let o = 0; o < 16; o++) {
+    for (let o = 0; o < 8; o++) {
         const p = pairs[o];
-        const ol = gLabels.outputs[o];
+        const ol = gLabels.outputs[p.out];
         const lbl = (ol && ol.label) ? ol.label : ('Out ' + (o+1));
         const hasMapping = p.posBtn !== '0_0' || p.negBtn !== '0_0';
         const border = hasMapping ? '1px solid #38bdf8' : '1px solid #334155';
         h += '<div style="padding:10px;background:#0f172a;border-radius:8px;margin-bottom:8px;border:' + border + '">';
         h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
         h += '<span style="color:#e2e8f0;font-weight:700;font-size:0.9rem">' + lbl + '</span>';
-        h += '<span style="color:#64748b;font-size:0.75rem">#' + (o+1) + '</span></div>';
+        h += '<span style="color:#64748b;font-size:0.75rem">#' + (o+1) + ' (ch' + p.out + '+' + (p.out+1) + ')</span></div>';
         h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:end">';
-        // Positive direction
+        // Positive direction (fwd channel of the pair)
         h += '<div style="background:#1a2332;border-radius:6px;padding:8px">';
-        h += '<label style="display:block;color:#22c55e;font-size:0.75rem;font-weight:700;margin-bottom:4px">+ Max PWM</label>';
+        h += '<label style="display:block;color:#22c55e;font-size:0.75rem;font-weight:700;margin-bottom:4px">+ (ch' + (o*2) + ')</label>';
         h += '<select id="br_pos_src_' + o + '" style="width:100%;margin-bottom:4px">' + buildBtnSourceDropdownStr(p.posBtn) + '</select>';
         h += '<input type="number" id="br_pos_pwm_' + o + '" value="' + p.posPwm + '" min="0" max="255" placeholder="PWM" style="width:100%"></div>';
-        // Negative direction
+        // Negative direction (rev channel of the pair)
         h += '<div style="background:#1a2332;border-radius:6px;padding:8px">';
-        h += '<label style="display:block;color:#ef4444;font-size:0.75rem;font-weight:700;margin-bottom:4px">- Min PWM</label>';
+        h += '<label style="display:block;color:#ef4444;font-size:0.75rem;font-weight:700;margin-bottom:4px">- (ch' + (o*2+1) + ')</label>';
         h += '<select id="br_neg_src_' + o + '" style="width:100%;margin-bottom:4px">' + buildBtnSourceDropdownStr(p.negBtn) + '</select>';
         h += '<input type="number" id="br_neg_pwm_' + o + '" value="' + p.negPwm + '" min="0" max="255" placeholder="PWM" style="width:100%"></div>';
         h += '</div></div>';
@@ -1509,14 +1606,33 @@ function buildBtnSourceDropdownStr(selectedVal) {
     const selBtn = parseInt(parts[1]) || 0;
     let opts = '<option value="0_0">-- Off --</option>';
     const joyAddrs = [0x21, 0x22, 0x23, 0x24];
+    // Merge sources: configured labels + live joysticks on the bus
+    const sources = {};
     for (let ji = 0; ji < gLabels.joysticks.length; ji++) {
         const jl = gLabels.joysticks[ji];
         const sa = jl.sourceAddress || joyAddrs[ji];
-        const pos = jl.position || ('Joy' + (ji+1));
-        for (let b = 0; b < 4; b++) {
+        sources[sa] = { pos: jl.position || ('Joy' + (ji+1)), unified: sa >= 0x80 };
+    }
+    if (gState.joy) for (const srcStr in gState.joy) {
+        const sa = Number(srcStr);
+        if (!sources[sa]) sources[sa] = { pos: '', unified: sa >= 0x80 };
+    }
+    const mods = gState.modules || {};
+    for (const sa in sources) if (mods[sa] && mods[sa].type === 3) sources[sa].unified = true;
+    // Keep the currently selected source visible even if offline and unlabeled
+    if (selSA > 0 && !sources[selSA]) sources[selSA] = { pos: '', unified: selSA >= 0x80 };
+    const sas = Object.keys(sources).map(Number).sort((a,b) => a - b);
+    for (const sa of sas) {
+        const src = sources[sa];
+        const pos = src.pos || ('0x' + sa.toString(16).toUpperCase());
+        // Unified joysticks have 24 buttons:
+        // 0-7 main PCA9555, 8-15 extender port0, 16-23 extender port1
+        const nBtn = src.unified ? 24 : 4;
+        for (let b = 0; b < nBtn; b++) {
             const val = sa + '_' + b;
             const sel = (sa == selSA && b == selBtn) ? 'selected' : '';
-            opts += '<option value="' + val + '" ' + sel + '>' + pos + ' Btn' + (b+1) + '</option>';
+            const bname = src.unified ? (b < 8 ? ('Main ' + (b+1)) : ('Ext ' + (b-7))) : ('Btn' + (b+1));
+            opts += '<option value="' + val + '" ' + sel + '>' + pos + ' ' + bname + '</option>';
         }
     }
     for (let ci = 0; ci < gCustomBtns.length; ci++) {
@@ -1541,8 +1657,9 @@ async function fetchBtnRules() {
 async function saveBtnRules() {
     const rules = [];
     let ruleIdx = 0;
-    for (let o = 0; o < 16; o++) {
-        // Positive direction (maxPWM)
+    for (let o = 0; o < 8; o++) {
+        const baseCh = o * 2; // pair base channel (fwd)
+        // Positive direction -> fwd channel of the pair
         const posSrcEl = document.getElementById('br_pos_src_' + o);
         if (!posSrcEl) continue;
         const posVal = posSrcEl.value.split('_');
@@ -1552,14 +1669,14 @@ async function saveBtnRules() {
             rules.push({
                 ruleIdx: ruleIdx++,
                 enabled: true,
-                outputChannel: o,
+                outputChannel: baseCh,
                 btnSourceSA: posSA,
                 btnIndex: posBtn,
                 btnMode: 0,
                 pwmTarget: parseInt(document.getElementById('br_pos_pwm_' + o).value) || 255
             });
         }
-        // Negative direction (minPWM)
+        // Negative direction -> rev channel of the pair
         const negSrcEl = document.getElementById('br_neg_src_' + o);
         if (!negSrcEl) continue;
         const negVal = negSrcEl.value.split('_');
@@ -1569,7 +1686,7 @@ async function saveBtnRules() {
             rules.push({
                 ruleIdx: ruleIdx++,
                 enabled: true,
-                outputChannel: o,
+                outputChannel: baseCh,
                 btnSourceSA: negSA,
                 btnIndex: negBtn,
                 btnMode: 1,
@@ -1665,7 +1782,7 @@ static void handleRoot() {
 static void handleState() {
   // Use chunked transfer to avoid massive heap allocation
   // Build JSON in a fixed buffer
-  static char buf[1536];
+  static char buf[2304];
   int pos = 0;
   pos +=
       snprintf(buf + pos, sizeof(buf) - pos,
@@ -1684,9 +1801,11 @@ static void handleState() {
       if (!firstJoy)
         pos += snprintf(buf + pos, sizeof(buf) - pos, ",");
       pos += snprintf(buf + pos, sizeof(buf) - pos,
-                      "\"%d\":{\"pots\":[%d,%d,%d,%d],\"btns\":%d,\"age\":%lu}",
+                      "\"%d\":{\"pots\":[%d,%d,%d,%d],\"btns\":%d,"
+                      "\"ext\":[%d,%d],\"age\":%lu}",
                       sa, g_joyPots[sa][0], g_joyPots[sa][1], g_joyPots[sa][2],
-                      g_joyPots[sa][3], g_joyButtons[sa],
+                      g_joyPots[sa][3], g_joyButtons[sa], g_extButtons0[sa],
+                      g_extButtons1[sa],
                       (millis() - g_joyUpdateTime[sa]) / 1000);
       firstJoy = false;
     }
@@ -2357,8 +2476,15 @@ static void handleBtnRulesPost() {
     r.btnIndex = parseJsonInt(sub, "btnIndex", 0);
     r.btnMode = parseJsonInt(sub, "btnMode", 0);
     r.pwmTarget = parseJsonInt(sub, "pwmTarget", 255);
+    // Mode 0 with target 0 is a no-op; older saves could store 0 - repair
+    if (r.btnMode == 0 && r.pwmTarget == 0)
+      r.pwmTarget = 255;
     g_btnOutputRules[i] = r;
-    cfgMgr.saveButtonOutputRule(i, r);
+    bool ok = cfgMgr.saveButtonOutputRule(i, r);
+    Serial.printf("[BtnRules] %s rule %d: SA=0x%02X btn=%d -> ch%d mode%d "
+                  "pwm=%d\n",
+                  ok ? "saved" : "SAVE FAILED for", i, r.btnSourceSA,
+                  r.btnIndex, r.outputChannel, r.btnMode, r.pwmTarget);
   }
   server.send(200, "application/json", "{\"ok\":true}");
 }
@@ -2461,12 +2587,20 @@ static void scanHeartbeats() {
 void ota_trackModule(uint8_t sa, const CANMessage &msg) {
   g_modules[sa].lastSeen = millis();
   g_modules[sa].addr = sa;
-  g_modules[sa].uptime = msg.data[0] | ((uint16_t)msg.data[1] << 8);
+  // Heartbeat layout: data[0]=online status, data[1..2]=uptime in seconds (LE)
+  g_modules[sa].uptime = msg.data[1] | ((uint16_t)msg.data[2] << 8);
   g_modules[sa].data5 = msg.data[5];
-  if (msg.data[5] == 16 || msg.data[5] == 8) {
+  // Explicit device type in data[7] (capability announcement, new firmware)
+  if (msg.data[7] == HB_TYPE_MOTOR_DRIVER) {
     g_modules[sa].type = 1; // Motor driver
+  } else if (msg.data[7] == HB_TYPE_JOYSTICK_LEGACY) {
+    g_modules[sa].type = 2; // Legacy joystick
+  } else if (msg.data[7] == HB_TYPE_JOYSTICK_UNIFIED) {
+    g_modules[sa].type = 3; // Unified 24-button joystick
+  } else if (msg.data[5] == 16 || msg.data[5] == 8) {
+    g_modules[sa].type = 1; // Motor driver (legacy heuristic)
   } else if (msg.data[3] == 1 || msg.data[3] == 2) {
-    g_modules[sa].type = 2; // Joystick
+    g_modules[sa].type = 2; // Joystick (legacy heuristic)
   }
 }
 
