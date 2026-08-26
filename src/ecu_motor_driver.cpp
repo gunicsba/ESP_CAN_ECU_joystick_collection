@@ -74,6 +74,7 @@ ForwarderConfig cfgMgr("motorcfg");
 MotorConfig g_motorCfg;
 uint16_t g_solenoidValues[MAX_AXIS_COUNT] = {0};
 static uint32_t lastSolenoidUpdate = 0;
+static bool nvsClearedAtBoot = false;
 static uint32_t lastHeartbeat = 0;
 static bool g_outputDirty = false;
 static uint32_t lastOutputBroadcast = 0;
@@ -1084,6 +1085,7 @@ void ecu_setup() {
   cfgMgr.begin();
   if (!cfgMgr.checkVersion()) {
     Serial.println("[MotorDriver] NVS cleared - using defaults");
+    nvsClearedAtBoot = true;
   }
   uint8_t forcedAddr = cfgMgr.getForcedAddress(ECU_PREFERRED_ADDRESS);
   cfgMgr.loadMotorConfig(g_motorCfg);
@@ -1194,6 +1196,17 @@ void ecu_setup() {
   ota_setup(hostname);
 #endif
   Serial.println("[MotorDriver] Setup complete, entering loop...");
+  {
+    // Persistence verdict, printed late enough to survive USB-CDC catch-up
+    int nRules = 0;
+    for (int i = 0; i < MAX_BUTTON_OUTPUT_RULES; i++)
+      if (g_btnOutputRules[i].enabled)
+        nRules++;
+    Serial.printf("[Config summary] NVS %s at boot, %d active button rule(s), "
+                  "saved keys %s\n",
+                  nvsClearedAtBoot ? "CLEARED" : "kept",
+                  nRules, cfgMgr.hasButtonRules() ? "present" : "MISSING");
+  }
 
   // Initialize WT5500 Ethernet after CAN is up (can be disabled to rule it
   // out as a hang source: build with -DDISABLE_ETHERNET)

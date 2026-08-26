@@ -1,4 +1,5 @@
 #include "ForwarderConfig.h"
+#include "nvs.h"
 
 // ---------------------------------------------------------------------------
 // AxisConfig serialization
@@ -197,7 +198,12 @@ bool ForwarderConfig::saveMotorConfig(const MotorConfig &cfg) {
     snprintf(key, sizeof(key), "axis_%d", i);
     uint8_t buf[8];
     cfg.axes[i].pack(buf, i);
-    _prefs.putBytes(key, buf, 8);
+    size_t written = _prefs.putBytes(key, buf, 8);
+    if (written != 8) {
+      Serial.printf("[Config] %s SAVE FAILED in saveMotorConfig (wrote %d)\n",
+                    key, (int)written);
+      return false;
+    }
   }
   return true;
 }
@@ -209,20 +215,45 @@ bool ForwarderConfig::saveAxisConfig(uint8_t axisIdx, const AxisConfig &axis) {
   snprintf(key, sizeof(key), "axis_%d", axisIdx);
   uint8_t buf[8];
   axis.pack(buf, axisIdx);
-  _prefs.putBytes(key, buf, 8);
+  // Raw NVS calls so the exact esp_err is visible (putBytes hides it)
+  nvs_handle_t h = 0;
+  esp_err_t e0 = nvs_open(_ns, NVS_READWRITE, &h);
+  if (e0 != ESP_OK) {
+    Serial.printf("[Config] %s SAVE FAILED nvs_open=%s\n", key,
+                  esp_err_to_name(e0));
+    return false;
+  }
+  esp_err_t e1 = nvs_set_blob(h, key, buf, 8);
+  esp_err_t e2 = (e1 == ESP_OK) ? nvs_commit(h) : ESP_OK;
+  nvs_close(h);
+  if (e1 != ESP_OK || e2 != ESP_OK) {
+    Serial.printf("[Config] %s SAVE FAILED set=%s commit=%s (free=%u)\n", key,
+                  esp_err_to_name(e1), esp_err_to_name(e2),
+                  (unsigned)_prefs.freeEntries());
+    return false;
+  }
   return true;
 }
 
 bool ForwarderConfig::hasAxisConfig() {
   if (!_started)
     return false;
-  for (int i = 0; i < MAX_AXIS_COUNT; i++) {
+  // Single atomic line so USB-CDC can't interleave it with loop prints
+  char line[128];
+  int pos = snprintf(line, sizeof(line), "[Config] NVS free entries: %u, axis keys:",
+                     (unsigned)_prefs.freeEntries());
+  bool found = false;
+  for (int i = 0; i < MAX_AXIS_COUNT && pos < (int)sizeof(line) - 8; i++) {
     char key[12];
     snprintf(key, sizeof(key), "axis_%d", i);
-    if (_prefs.isKey(key))
-      return true;
+    bool present = _prefs.isKey(key);
+    pos += snprintf(line + pos, sizeof(line) - pos, " %d:%s", i,
+                    present ? "Y" : "N");
+    if (present)
+      found = true;
   }
-  return false;
+  Serial.println(line);
+  return found;
 }
 
 bool ForwarderConfig::loadCanOutputRules(
@@ -504,15 +535,19 @@ bool ForwarderConfig::loadJoystickMappings(
     JoystickOutputMapping mappings[MAX_JOY_FUNCTIONS]) {
   if (!_started)
     return false;
-  _prefs.begin("joymap", true);
+  // Local Preferences: begin()/end() on _prefs would silently fail to switch
+  // namespace but still CLOSE the motorcfg handle, killing all later NVS I/O
+  Preferences jm;
+  if (!jm.begin("joymap", true))
+    return false;
   for (int i = 0; i < MAX_JOY_FUNCTIONS; i++) {
     char key[8];
     snprintf(key, sizeof(key), "jm%d", i);
-    mappings[i].outputChannel = _prefs.getUChar(key, 0);
+    mappings[i].outputChannel = jm.getUChar(key, 0);
     snprintf(key, sizeof(key), "ji%d", i);
-    mappings[i].invert = _prefs.getUChar(key, 0) != 0;
+    mappings[i].invert = jm.getUChar(key, 0) != 0;
   }
-  _prefs.end();
+  jm.end();
   return true;
 }
 
@@ -520,14 +555,16 @@ bool ForwarderConfig::saveJoystickMappings(
     const JoystickOutputMapping mappings[MAX_JOY_FUNCTIONS]) {
   if (!_started)
     return false;
-  _prefs.begin("joymap", false);
+  Preferences jm;
+  if (!jm.begin("joymap", false))
+    return false;
   for (int i = 0; i < MAX_JOY_FUNCTIONS; i++) {
     char key[8];
     snprintf(key, sizeof(key), "jm%d", i);
-    _prefs.putUChar(key, mappings[i].outputChannel);
+    jm.putUChar(key, mappings[i].outputChannel);
     snprintf(key, sizeof(key), "ji%d", i);
-    _prefs.putUChar(key, mappings[i].invert ? 1 : 0);
+    jm.putUChar(key, mappings[i].invert ? 1 : 0);
   }
-  _prefs.end();
+  jm.end();
   return true;
 }
